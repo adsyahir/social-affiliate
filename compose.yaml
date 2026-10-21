@@ -1,0 +1,93 @@
+# Full stack (VPS):      docker compose up -d --build
+# Local dev with Herd:   docker compose up -d postgres redis
+#
+# Values come from .env. Inside the stack DB_HOST / REDIS_HOST are overridden
+# to the service names, so the same .env works for Herd and for Docker.
+
+x-app: &app
+  build:
+    context: .
+    target: production
+  image: social-affiliate:latest
+  restart: unless-stopped
+  env_file: .env
+  environment: &app-env
+    DB_HOST: postgres
+    DB_PORT: 5432
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+  volumes:
+    - storage:/var/www/html/storage
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  app:
+    <<: *app
+    environment:
+      <<: *app-env
+      # Runs migrations and caches config/routes/views on container start.
+      AUTORUN_ENABLED: "true"
+    ports:
+      - "${APP_PORT:-8080}:8080"
+
+  queue:
+    <<: *app
+    command: ["php", "/var/www/html/artisan", "queue:work", "redis", "--tries=3", "--max-time=3600"]
+    # Wait for app so only one container initialises the shared storage volume.
+    depends_on: &after-app
+      app:
+        condition: service_healthy
+    stop_signal: SIGTERM
+    healthcheck:
+      test: ["CMD", "healthcheck-queue"]
+      start_period: 10s
+
+  scheduler:
+    <<: *app
+    command: ["php", "/var/www/html/artisan", "schedule:work"]
+    depends_on: *after-app
+    stop_signal: SIGTERM
+    healthcheck:
+      test: ["CMD", "healthcheck-schedule"]
+      start_period: 10s
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Bound to localhost only: reachable from Herd / an SSH tunnel, never from the internet.
+      - "127.0.0.1:${FORWARD_DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "127.0.0.1:${FORWARD_REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  storage:
+  pgdata:
+  redisdata:
