@@ -2,12 +2,14 @@
 
 namespace App\Filament\Resources\SocialAccounts\Schemas;
 
+use App\Enums\ContentSource;
 use App\Enums\SocialPlatform;
 use Filament\Forms\Components\DateTimePicker;
 use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\ToggleButtons;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
@@ -64,8 +66,18 @@ class SocialAccountForm
                             ->required()
                             ->maxLength(150)
                             ->columnSpanFull(),
+                        ToggleButtons::make('content_source')
+                            ->label('Who writes the scheduled posts')
+                            ->options(ContentSource::class)
+                            ->default(ContentSource::Ai)
+                            ->helperText('Either way, you can also use Generate draft (AI) or Write post (your text) on any product.')
+                            ->inline()
+                            ->live()
+                            ->required()
+                            ->columnSpanFull(),
                         Select::make('ai_model')
                             ->label('AI model')
+                            ->visible(fn (Get $get): bool => self::source($get('content_source')) === ContentSource::Ai)
                             ->options(fn (): array => config('services.anthropic.models'))
                             ->placeholder(fn (): string => 'Default ('.config('services.anthropic.model').')')
                             ->helperText('Which model writes this account\'s posts. Cheaper models cost less per post; compare drafts before switching.')
@@ -88,6 +100,11 @@ class SocialAccountForm
                             ->columnSpanFull(),
                     ]),
             ]);
+    }
+
+    private static function source(ContentSource|string|null $source): ContentSource
+    {
+        return $source instanceof ContentSource ? $source : (ContentSource::tryFrom((string) $source) ?? ContentSource::Ai);
     }
 
     /**

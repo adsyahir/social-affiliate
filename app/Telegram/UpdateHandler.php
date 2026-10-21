@@ -2,6 +2,8 @@
 
 namespace App\Telegram;
 
+use App\Content\DraftWriter;
+use App\Content\Exceptions\ContentGenerationException;
 use App\Enums\PostStatus;
 use App\Jobs\PublishPost;
 use App\Jobs\RegenerateDraft;
@@ -16,7 +18,10 @@ use Illuminate\Support\Str;
  */
 class UpdateHandler
 {
-    public function __construct(private readonly TelegramBot $bot) {}
+    public function __construct(
+        private readonly TelegramBot $bot,
+        private readonly DraftWriter $writer,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $update
@@ -57,11 +62,13 @@ class UpdateHandler
         $answer = match ($action) {
             'approve' => $this->transition($post, [PostStatus::Draft], PostStatus::Approved, $by, fn () => PublishPost::dispatch($post))
                 ? 'Approved. Publishing...' : "Already {$post->fresh()->status->value}.",
-            'reject' => $this->transition($post, [PostStatus::Draft], PostStatus::Rejected, $by)
+            'reject' => $this->transition($post, [PostStatus::Draft, PostStatus::Pending], PostStatus::Rejected, $by)
                 ? 'Rejected.' : "Already {$post->fresh()->status->value}.",
             'retry' => $this->transition($post, [PostStatus::Failed], PostStatus::Approved, $by, fn () => PublishPost::dispatch($post))
                 ? 'Publishing again...' : "Already {$post->fresh()->status->value}.",
-            'regen' => $this->regenerate($post, null) ? 'Writing a new version...' : 'Only drafts and rejected posts can be rewritten.',
+            'regen' => $this->regenerate($post, null) ? 'Writing a new version...' : ($post->writtenByYou()
+                ? 'This is your own text. Reply with new text to replace it.'
+                : 'Only drafts and rejected posts can be rewritten.'),
             default => 'Unknown action.',
         };
 
@@ -87,9 +94,35 @@ class UpdateHandler
             ->where('telegram_message_id', (int) $message['reply_to_message']['message_id'])
             ->first();
 
-        if ($post !== null && ! $this->regenerate($post, $text)) {
-            $this->safely(fn () => $this->bot->sendMessage($chatId, 'Only drafts and rejected posts can be rewritten.', replyToMessageId: (int) $message['message_id']));
+        if ($post === null) {
+            return;
         }
+
+        $replyTo = (int) $message['message_id'];
+
+        // Posts you write yourself: the reply is the new text, not feedback for the AI.
+        if ($post->status === PostStatus::Pending || DraftMessage::writtenByYou($post)) {
+            $this->useYourText($post, $text, $chatId, $replyTo);
+
+            return;
+        }
+
+        if (! $this->regenerate($post, $text)) {
+            $this->safely(fn () => $this->bot->sendMessage($chatId, 'Only drafts and rejected posts can be rewritten.', replyToMessageId: $replyTo));
+        }
+    }
+
+    private function useYourText(Post $post, string $text, string $chatId, int $replyTo): void
+    {
+        try {
+            $this->writer->fillFromText($post, $text);
+        } catch (ContentGenerationException $e) {
+            $this->safely(fn () => $this->bot->sendMessage($chatId, e($e->getMessage()), replyToMessageId: $replyTo));
+
+            return;
+        }
+
+        $this->show($post->fresh(), '✏️ Your new text.');
     }
 
     /**
@@ -120,7 +153,7 @@ class UpdateHandler
 
     private function regenerate(Post $post, ?string $feedback): bool
     {
-        if (! in_array($post->status, [PostStatus::Draft, PostStatus::Rejected], true)) {
+        if (! in_array($post->status, [PostStatus::Draft, PostStatus::Rejected], true) || $post->writtenByYou()) {
             return false;
         }
 

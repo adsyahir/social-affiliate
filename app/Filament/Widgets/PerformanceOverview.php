@@ -35,7 +35,8 @@ class PerformanceOverview extends StatsOverviewWidget
         $top = (clone $latest)->with('post')->orderByDesc('views')->first();
 
         return [
-            Stat::make('Waiting for approval', number_format(Post::query()->where('status', PostStatus::Draft)->count())),
+            Stat::make('Waiting for you', number_format(Post::query()->whereIn('status', [PostStatus::Pending, PostStatus::Draft])->count()))
+                ->description('Drafts to approve and posts to write'),
             Stat::make('Published', number_format((clone $published)->count())),
             Stat::make('Views', number_format((int) $totals->views))
                 ->description($top ? 'Top: '.Str::limit($top->post->content, 40).' ('.number_format($top->views).')' : 'No insights yet'),

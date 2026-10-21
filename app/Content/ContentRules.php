@@ -30,7 +30,7 @@ class ContentRules
     /**
      * @return list<string>
      */
-    public function check(GeneratedText $text, Product $product, int $maxLength): array
+    public function check(GeneratedText $text, Product $product, int $maxLength, bool $includePersonalClaim = true): array
     {
         $problems = [];
         $placeholder = PromptBuilder::LINK_PLACEHOLDER;
@@ -55,11 +55,23 @@ class ContentRules
             $problems[] = "The reply contained a URL of its own; use only the {$placeholder} placeholder.";
         }
 
-        if (! $product->used_personally
-            && preg_match(self::PERSONAL_CLAIM_PATTERN, $text->post.' '.$text->linkReply, $match)) {
-            $problems[] = "It claimed personal use (\"{$match[0]}\") but you have not used this product; write it as a recommendation or find instead.";
+        if ($includePersonalClaim && ($claim = $this->personalClaim($text, $product)) !== null) {
+            $problems[] = $claim;
         }
 
         return $problems;
+    }
+
+    /**
+     * A first-person claim of using a product that is not marked as used. For AI drafts this
+     * is a problem; for text you wrote yourself it is only a warning, since you know what you used.
+     */
+    public function personalClaim(GeneratedText $text, Product $product): ?string
+    {
+        if ($product->used_personally || ! preg_match(self::PERSONAL_CLAIM_PATTERN, $text->post.' '.$text->linkReply, $match)) {
+            return null;
+        }
+
+        return "It claimed personal use (\"{$match[0]}\") but you have not used this product; write it as a recommendation or find instead.";
     }
 }

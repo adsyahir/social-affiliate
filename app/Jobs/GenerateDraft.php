@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Content\DraftWriter;
 use App\Content\Exceptions\ContentGenerationException;
+use App\Enums\ContentSource;
 use App\Models\Campaign;
 use App\Models\CampaignRun;
 use App\Models\Product;
@@ -39,7 +40,10 @@ class GenerateDraft implements ShouldQueue
     public function handle(DraftWriter $writer): void
     {
         try {
-            $post = $writer->create($this->product, $this->account, $this->campaign);
+            // Accounts set to "I write them" get a waiting post and the prompt in Telegram instead.
+            $post = $this->account->content_source === ContentSource::Manual
+                ? $writer->createPending($this->product, $this->account, $this->campaign)
+                : $writer->create($this->product, $this->account, $this->campaign);
         } catch (ContentGenerationException $e) {
             if ($e->retryable && $this->attempts() < $this->tries) {
                 $this->release(120 * $this->attempts());

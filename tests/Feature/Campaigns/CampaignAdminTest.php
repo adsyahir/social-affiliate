@@ -37,7 +37,7 @@ class CampaignAdminTest extends TestCase
 
         Livewire::test(ListCampaigns::class)
             ->callTableAction('runNow', $campaign)
-            ->assertNotified('Writing drafts');
+            ->assertNotified('Started');
 
         Queue::assertPushed(GenerateDraft::class);
         $this->assertSame(CampaignRun::MANUAL, $campaign->runs()->sole()->trigger);

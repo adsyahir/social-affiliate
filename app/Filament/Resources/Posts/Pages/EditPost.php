@@ -7,6 +7,7 @@ use App\Content\Exceptions\ContentGenerationException;
 use App\Enums\PostStatus;
 use App\Filament\Resources\Posts\PostResource;
 use App\Filament\Resources\Posts\Schemas\PostForm;
+use App\Filament\Resources\Products\Pages\EditProduct;
 use App\Jobs\FetchPostInsights;
 use App\Jobs\SyncApprovalMessage;
 use App\Models\Post;
@@ -15,9 +16,11 @@ use App\Telegram\TelegramBot;
 use Filament\Actions\Action;
 use Filament\Actions\DeleteAction;
 use Filament\Forms\Components\Textarea;
+use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\EditRecord;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\HtmlString;
 
 class EditPost extends EditRecord
 {
@@ -55,11 +58,50 @@ class EditPost extends EditRecord
                     SyncApprovalMessage::dispatch($record);
                     Notification::make()->title('Queued for Telegram')->body('It arrives once the queue worker picks it up.')->success()->send();
                 }),
+            Action::make('writePost')
+                ->label('Write post')
+                ->icon(Heroicon::OutlinedPencilSquare)
+                ->visible(fn (Post $record): bool => $record->status === PostStatus::Pending || ($record->writtenByYou() && PostForm::editable($record)))
+                ->modalDescription('Paste your post, or Claude\'s whole answer. The tracked link and disclosure are added for you.')
+                ->modalSubmitActionLabel('Save draft')
+                ->schema([
+                    TextEntry::make('prompt')
+                        ->label('Prompt to paste into Claude.ai (click to copy)')
+                        ->state(fn (): string => app(DraftWriter::class)->copyPrompt($this->getRecord()->product, $this->getRecord()->socialAccount))
+                        // Shown with its line breaks; the copy button copies the plain text.
+                        ->formatStateUsing(fn (string $state): HtmlString => new HtmlString(nl2br(e($state))))
+                        ->copyable()
+                        ->copyableState(fn (string $state): string => $state)
+                        ->copyMessage('Prompt copied')
+                        ->extraAttributes(['style' => 'max-height: 16rem; overflow-y: auto;']),
+                    Textarea::make('text')
+                        ->label('Post, or Claude\'s whole answer')
+                        ->rows(8)
+                        ->required(),
+                    Textarea::make('reply')
+                        ->label('Link reply (optional)')
+                        ->helperText('Leave empty to use the REPLY part of Claude\'s answer, or just the link.')
+                        ->rows(3),
+                ])
+                ->action(function (Post $record, Action $action, array $data, DraftWriter $writer): void {
+                    try {
+                        $writer->fillFromText($record, $data['text'], $data['reply'] ?? null);
+                    } catch (ContentGenerationException $e) {
+                        Notification::make()->title('Please fix the text')->body($e->getMessage())->danger()->send();
+                        $action->halt();
+
+                        return;
+                    }
+
+                    $this->refreshFormData(['content', 'link_reply_content', 'status']);
+                    SyncApprovalMessage::dispatch($record->fresh(), '✏️ Written in the admin.');
+                    EditProduct::notifySaved($record->fresh());
+                }),
             Action::make('regenerate')
                 ->label('Regenerate')
                 ->icon(Heroicon::OutlinedSparkles)
                 ->color('gray')
-                ->visible(fn (Post $record): bool => PostForm::editable($record) && $record->product_id !== null)
+                ->visible(fn (Post $record): bool => PostForm::editable($record) && $record->product_id !== null && ! $record->writtenByYou())
                 ->modalDescription('Writes a new version in the account\'s persona. Unsaved edits to this draft are replaced.')
                 ->modalSubmitActionLabel('Regenerate')
                 ->schema([
@@ -84,7 +126,7 @@ class EditPost extends EditRecord
                     Notification::make()->title('New version written')->success()->send();
                 }),
             DeleteAction::make()
-                ->visible(fn (Post $record): bool => PostForm::editable($record)),
+                ->visible(fn (Post $record): bool => PostForm::editable($record) || $record->status === PostStatus::Pending),
         ];
     }
 

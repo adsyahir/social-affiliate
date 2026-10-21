@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Campaigns\Tables;
 
 use App\Campaigns\CampaignRunner;
 use App\Campaigns\PostingSchedule;
+use App\Enums\ContentSource;
 use App\Enums\ProductStatus;
 use App\Models\Campaign;
 use App\Models\CampaignRun;
@@ -75,18 +76,34 @@ class CampaignsTable
                     ->icon(Heroicon::OutlinedPlay)
                     ->color('gray')
                     ->requiresConfirmation()
-                    ->modalDescription('Writes drafts for the next product right away, for every account in this campaign. It does not use up one of today\'s scheduled slots.')
+                    ->modalDescription('Starts the next product right away for every account in this campaign: an AI draft, or a "Your turn" prompt for accounts where you write the posts. It does not use up one of today\'s scheduled slots.')
                     ->action(function (Campaign $record, CampaignRunner $runner): void {
                         $run = $runner->run($record, CampaignRun::MANUAL);
 
                         match ($run?->status) {
                             null => Notification::make()->title('No social accounts')->body('Add at least one social account to this campaign.')->danger()->send(),
                             CampaignRun::NO_PRODUCTS => Notification::make()->title('No products left')->body('Import or add products for this campaign\'s affiliate account.')->warning()->send(),
-                            default => Notification::make()->title('Writing drafts')->body("For \"{$run->product->name}\", {$run->accounts} ".str('account')->plural($run->accounts).'. They arrive in Telegram for approval.')->success()->send(),
+                            default => Notification::make()->title('Started')->body(self::runMessage($record, $run->product))->success()->send(),
                         };
                     }),
                 EditAction::make(),
             ]);
+    }
+
+    /**
+     * What happens next for each kind of account after a run starts.
+     */
+    public static function runMessage(Campaign $campaign, Product $product): string
+    {
+        $manual = $campaign->socialAccounts()->where('content_source', ContentSource::Manual)->count();
+        $ai = $campaign->socialAccounts()->count() - $manual;
+
+        $parts = array_filter([
+            $ai > 0 ? "AI drafts for {$ai} ".str('account')->plural($ai).' arrive in Telegram for approval' : null,
+            $manual > 0 ? "{$manual} ".str('account')->plural($manual).' '.($manual === 1 ? 'gets' : 'get').' a "Your turn" prompt for you to write' : null,
+        ]);
+
+        return "For \"{$product->name}\": ".implode(', and ', $parts).'.';
     }
 
     private static function nextSlot(Campaign $campaign): ?string

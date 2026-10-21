@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\ContentSource;
 use App\Enums\SocialPlatform;
 use Database\Factories\SocialAccountFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -15,7 +16,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * The persona drives every prompt for this account. Expected keys:
  * language, tone, audience, disclosure, sample_posts (list of strings).
  */
-#[Fillable(['platform', 'name', 'external_id', 'access_token', 'token_expires_at', 'persona', 'ai_model'])]
+#[Fillable(['platform', 'name', 'external_id', 'access_token', 'token_expires_at', 'persona', 'ai_model', 'content_source'])]
 #[Hidden(['access_token'])]
 class SocialAccount extends Model
 {
@@ -34,6 +35,7 @@ class SocialAccount extends Model
             'access_token' => 'encrypted',
             'token_expires_at' => 'datetime',
             'persona' => 'array',
+            'content_source' => ContentSource::class,
         ];
     }
 

@@ -96,6 +96,14 @@ class Post extends Model
     }
 
     /**
+     * Text from you (pasted or typed) rather than from the AI. The AI never rewrites it.
+     */
+    public function writtenByYou(): bool
+    {
+        return ($this->generation['source'] ?? null) === 'manual';
+    }
+
+    /**
      * A campaign's content may only go to that campaign's social accounts,
      * and only for products from that campaign's affiliate account.
      *

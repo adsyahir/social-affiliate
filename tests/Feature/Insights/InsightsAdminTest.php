@@ -96,7 +96,7 @@ class InsightsAdminTest extends TestCase
         Post::factory()->count(2)->create(['link_reply_content' => 'x', 'status' => PostStatus::Draft]);
 
         Livewire::test(PerformanceOverview::class)
-            ->assertSee('Waiting for approval')
+            ->assertSee('Waiting for you')
             ->assertSeeInOrder(['Published', '2'])
             // Latest snapshot per post only: 1,500 + 20, not 1,620 and not the old post.
             ->assertSee('1,520')

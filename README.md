@@ -75,6 +75,20 @@ with text rewrites it using your reply as feedback. Approve publishes the post, 
 
 A queue worker must be running for drafts, rewrites and publishing to happen.
 
+## Writing posts yourself (paste mode)
+
+Each social account has **Who writes the scheduled posts**: *AI writes them* (Claude API) or
+*I write them*. No Claude API key is needed for the second.
+
+- **Scheduled slots** for an "I write them" account send a *Your turn* message to Telegram with a
+  prompt to paste into Claude.ai. Reply to that message with Claude's whole answer (`POST:` /
+  `REPLY:`) or just your post. Skip drops it.
+- **Write post** on any product page (and on a waiting post's page) does the same in the admin,
+  with a copy button for the prompt.
+- Either way, the tracked link and the disclosure are added for you, the same posting rules apply
+  (no link in the main post), and the draft goes for approval as usual. The AI never rewrites
+  text you wrote; reply with new text to replace it.
+
 ## Scheduled drafts
 
 `campaigns:run` runs every 15 minutes (scheduler service). Each active campaign spreads its

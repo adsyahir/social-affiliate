@@ -43,6 +43,21 @@ class PromptBuilder
         );
     }
 
+    /**
+     * The same prompt as one block of text, to paste into Claude.ai (or any chat AI) by hand,
+     * asking for an answer the app can read back.
+     */
+    public function forCopy(ContentRequest $request, int $maxLength): string
+    {
+        $prompt = $this->build($request, $maxLength);
+        $link = self::LINK_PLACEHOLDER;
+
+        return $prompt->system."\n\n".$prompt->messages[0]['content']."\n\n"
+            ."Answer in exactly this format, with nothing before or after it:\n"
+            ."POST:\n(the post)\n"
+            ."REPLY:\n(the link reply, containing {$link})";
+    }
+
     public static function disclosure(SocialAccount $account): string
     {
         return trim((string) ($account->persona['disclosure'] ?? '')) ?: 'Affiliate link: I may earn a small commission.';
