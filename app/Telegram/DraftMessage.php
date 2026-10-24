@@ -137,6 +137,7 @@ class DraftMessage
 
     private static function e(string $text): string
     {
-        return htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');
+        // Only <, > and & need escaping; Telegram's HTML mode does not know entities such as &apos;.
+        return htmlspecialchars($text, ENT_NOQUOTES | ENT_SUBSTITUTE, 'UTF-8');
     }
 }

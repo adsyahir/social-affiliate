@@ -124,7 +124,7 @@ class ApprovalFlowTest extends TestCase
     {
         Queue::fake();
         $post = $this->makePost(['telegram_chat_id' => '555', 'telegram_message_id' => 77]);
-        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => true])]);
+        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 78]])]);
 
         $this->handle($this->tap("regen:{$post->id}"));
         $this->handle(['update_id' => 2, 'message' => [
@@ -136,6 +136,24 @@ class ApprovalFlowTest extends TestCase
         Queue::assertPushed(RegenerateDraft::class, fn (RegenerateDraft $job) => $job->feedback === 'Lebih pendek');
         // While rewriting, the buttons are taken away so nobody approves the old version.
         Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/editMessageText') && $r['reply_markup'] === ['inline_keyboard' => []]);
+    }
+
+    public function test_a_feedback_reply_continues_the_draft_under_the_reply(): void
+    {
+        Queue::fake();
+        $post = $this->makePost(['telegram_chat_id' => '555', 'telegram_message_id' => 77]);
+        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 78]])]);
+
+        $this->handle(['update_id' => 2, 'message' => [
+            'message_id' => 90, 'from' => ['id' => 9, 'username' => 'adam'], 'chat' => ['id' => 555],
+            'text' => 'Lebih pendek', 'reply_to_message' => ['message_id' => 77],
+        ]]);
+
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/sendMessage')
+            && $r['reply_parameters']['message_id'] === 90 && str_contains($r['text'], 'Rewriting with your notes') && ! isset($r['reply_markup']));
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/editMessageText') && $r['message_id'] === 77 && str_contains($r['text'], 'continues below'));
+        // The rewrite, when done, updates the new message.
+        $this->assertSame(78, $post->fresh()->telegram_message_id);
     }
 
     public function test_updates_from_other_chats_or_users_are_ignored(): void
@@ -252,14 +270,14 @@ class ApprovalFlowTest extends TestCase
     {
         Queue::fake();
         $post = $this->makePost(['telegram_chat_id' => '555', 'telegram_message_id' => 77]);
-        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => true])]);
+        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 78]])]);
 
         $this->handle(['update_id' => 3, 'message' => [
             'message_id' => 91, 'from' => ['id' => 9], 'chat' => ['id' => 555],
             'text' => str_repeat('panjang ', 1000), 'reply_to_message' => ['message_id' => 77],
         ]]);
 
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/editMessageText') && mb_strlen($r['text']) < 4096);
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/sendMessage') && mb_strlen($r['text']) < 4096);
         // Only the echo in the chat is shortened; the model still gets the whole note.
         Queue::assertPushed(RegenerateDraft::class, fn (RegenerateDraft $job) => mb_strlen($job->feedback) > 4000);
     }

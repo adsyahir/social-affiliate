@@ -147,17 +147,21 @@ class ManualFlowTest extends TestCase
         [$product, $account, $campaign] = $this->setUpCampaign(ContentSource::Manual);
         $pending = app(DraftWriter::class)->createPending($product, $account, $campaign);
         $pending->update(['telegram_chat_id' => '555', 'telegram_message_id' => 50]);
-        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 51]])]);
 
         $this->reply(50, self::ANSWER);
 
         $post = $pending->fresh();
         $this->assertSame(PostStatus::Draft, $post->status);
         $this->assertSame('Powerbank kecik tapi padu.', $post->content);
-        // Your own drafts get Approve and Reject; a reply replaces the text instead of asking AI.
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/editMessageText')
+        // The draft and its buttons arrive under your reply, so you don't scroll back up for them.
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/sendMessage')
+            && $r['reply_parameters']['message_id'] === 99
             && $r['reply_markup'] === ['inline_keyboard' => DraftMessage::keyboard($post)]
             && count(DraftMessage::keyboard($post)[0]) === 2);
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/editMessageText')
+            && $r['message_id'] === 50 && str_contains($r['text'], 'continues below') && $r['reply_markup'] === ['inline_keyboard' => []]);
+        $this->assertSame(51, $post->telegram_message_id);
     }
 
     public function test_a_reply_that_breaks_the_rules_is_answered_with_what_to_fix(): void
@@ -179,7 +183,7 @@ class ManualFlowTest extends TestCase
         [$product, $account] = $this->setUpCampaign(ContentSource::Manual);
         $post = app(DraftWriter::class)->createFromText($product, $account, 'First version');
         $post->update(['telegram_chat_id' => '555', 'telegram_message_id' => 60]);
-        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => true])]);
+        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 78]])]);
 
         $this->reply(60, 'Second version');
 
@@ -289,6 +293,45 @@ class ManualFlowTest extends TestCase
 
         $this->assertStringContainsString('open this post in the admin', $text);
         $this->assertStringNotContainsString('<pre>', $text);
+    }
+
+    public function test_the_prompt_in_telegram_has_plain_apostrophes(): void
+    {
+        [$product, $account, $campaign] = $this->setUpCampaign(ContentSource::Manual);
+        $pending = app(DraftWriter::class)->createPending($product, $account, $campaign);
+
+        $text = DraftMessage::text($pending->fresh());
+
+        // Telegram's HTML mode does not know &apos;, so it would show it literally.
+        $this->assertStringNotContainsString('&apos;', $text);
+        $this->assertStringContainsString("account's own voice", $text);
+    }
+
+    public function test_a_message_that_is_not_a_reply_gets_a_hint(): void
+    {
+        [$product, $account, $campaign] = $this->setUpCampaign(ContentSource::Manual);
+        $pending = app(DraftWriter::class)->createPending($product, $account, $campaign);
+        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+
+        app(UpdateHandler::class)->handle(['update_id' => 4, 'message' => [
+            'message_id' => 98, 'from' => ['id' => 9, 'username' => 'adam'], 'chat' => ['id' => 555], 'text' => self::ANSWER,
+        ]]);
+
+        $this->assertSame(PostStatus::Pending, $pending->fresh()->status);
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/sendMessage')
+            && str_contains($r['text'], 'Reply to')
+            && str_contains($r['text'], "#{$pending->id}"));
+    }
+
+    public function test_messages_from_other_chats_get_no_hint(): void
+    {
+        Http::fake();
+
+        app(UpdateHandler::class)->handle(['update_id' => 5, 'message' => [
+            'message_id' => 1, 'from' => ['id' => 7], 'chat' => ['id' => 999], 'text' => 'hello',
+        ]]);
+
+        Http::assertNothingSent();
     }
 
     private function reply(int $toMessageId, string $text): void

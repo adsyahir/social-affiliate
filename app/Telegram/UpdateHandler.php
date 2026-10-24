@@ -32,7 +32,32 @@ class UpdateHandler
             $this->handleCallback($update['callback_query']);
         } elseif (isset($update['message']['reply_to_message'])) {
             $this->handleReply($update['message']);
+        } elseif (isset($update['message'])) {
+            $this->handlePlainMessage($update['message']);
         }
+    }
+
+    /**
+     * Text sent without replying cannot be matched to a post, so say how to do it instead of staying silent.
+     *
+     * @param  array<string, mixed>  $message
+     */
+    private function handlePlainMessage(array $message): void
+    {
+        $chatId = (string) ($message['chat']['id'] ?? '');
+
+        if (trim((string) ($message['text'] ?? '')) === '' || ! $this->authorized($chatId, $message['from'] ?? [])) {
+            return;
+        }
+
+        $waiting = Post::query()->where('status', PostStatus::Pending)->orderBy('id')->pluck('id');
+        $hint = 'Reply to a post\'s message (long-press it, then Reply) so I know which post your text is for.';
+
+        if ($waiting->isNotEmpty()) {
+            $hint .= ' Waiting for your text: '.$waiting->map(fn (int $id): string => "#{$id}")->implode(', ').'.';
+        }
+
+        $this->safely(fn () => $this->bot->sendMessage($chatId, e($hint), replyToMessageId: (int) $message['message_id']));
     }
 
     /**
@@ -107,7 +132,7 @@ class UpdateHandler
             return;
         }
 
-        if (! $this->regenerate($post, $text)) {
+        if (! $this->regenerate($post, $text, $replyTo)) {
             $this->safely(fn () => $this->bot->sendMessage($chatId, 'Only drafts and rejected posts can be rewritten.', replyToMessageId: $replyTo));
         }
     }
@@ -122,7 +147,7 @@ class UpdateHandler
             return;
         }
 
-        $this->show($post->fresh(), '✏️ Your new text.');
+        $this->continueBelow($post->fresh(), $replyTo, '✏️ Your new text.');
     }
 
     /**
@@ -151,14 +176,18 @@ class UpdateHandler
         return true;
     }
 
-    private function regenerate(Post $post, ?string $feedback): bool
+    /**
+     * @param  int|null  $replyTo  your reply, when the rewrite was asked for by replying
+     */
+    private function regenerate(Post $post, ?string $feedback, ?int $replyTo = null): bool
     {
         if (! in_array($post->status, [PostStatus::Draft, PostStatus::Rejected], true) || $post->writtenByYou()) {
             return false;
         }
 
         // Buttons go away while rewriting, so nobody approves the version being replaced.
-        $this->show($post, $feedback === null ? '🔄 Writing a new version...' : '🔄 Rewriting with your notes: '.Str::limit($feedback, 300), buttons: false);
+        $note = $feedback === null ? '🔄 Writing a new version...' : '🔄 Rewriting with your notes: '.Str::limit($feedback, 300);
+        $replyTo === null ? $this->show($post, $note, buttons: false) : $this->continueBelow($post, $replyTo, $note, buttons: false);
         RegenerateDraft::dispatch($post, $feedback);
 
         return true;
@@ -179,6 +208,39 @@ class UpdateHandler
             DraftMessage::text($post, $note),
             $buttons ? DraftMessage::keyboard($post) : null,
         ));
+    }
+
+    /**
+     * After you reply, the draft (and its buttons) carries on in a new message under your reply,
+     * and the old message points down to it. Later updates edit the new message.
+     */
+    private function continueBelow(Post $post, int $replyTo, ?string $note = null, bool $buttons = true): void
+    {
+        $oldMessageId = $post->telegram_message_id;
+
+        try {
+            $newMessageId = $this->bot->sendMessage(
+                (string) $post->telegram_chat_id,
+                DraftMessage::text($post, $note),
+                $buttons ? DraftMessage::keyboard($post) : null,
+                $replyTo,
+            );
+        } catch (TelegramException $e) {
+            Log::warning('Telegram update failed', ['error' => $e->getMessage()]);
+            $this->show($post, $note, $buttons);
+
+            return;
+        }
+
+        $post->forceFill(['telegram_message_id' => $newMessageId])->saveQuietly();
+
+        if ($oldMessageId !== null) {
+            $this->safely(fn () => $this->bot->editMessageText(
+                (string) $post->telegram_chat_id,
+                $oldMessageId,
+                "<i>Post #{$post->id} continues below ⬇️</i>",
+            ));
+        }
     }
 
     /**
