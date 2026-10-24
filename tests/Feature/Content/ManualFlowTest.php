@@ -314,7 +314,7 @@ class ManualFlowTest extends TestCase
         Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
 
         app(UpdateHandler::class)->handle(['update_id' => 4, 'message' => [
-            'message_id' => 98, 'from' => ['id' => 9, 'username' => 'adam'], 'chat' => ['id' => 555], 'text' => self::ANSWER,
+            'message_id' => 98, 'from' => ['id' => 9, 'username' => 'adam'], 'chat' => ['id' => 555], 'text' => 'hello',
         ]]);
 
         $this->assertSame(PostStatus::Pending, $pending->fresh()->status);
@@ -322,6 +322,38 @@ class ManualFlowTest extends TestCase
             && str_contains($r['text'], 'reply to its message')
             && str_contains($r['text'], 'product link')
             && str_contains($r['text'], "#{$pending->id}"));
+    }
+
+    public function test_an_answer_sent_to_the_wrong_message_fills_the_only_waiting_post(): void
+    {
+        [$product, $account, $campaign] = $this->setUpCampaign(ContentSource::Manual);
+        $pending = app(DraftWriter::class)->createPending($product, $account, $campaign);
+        $pending->update(['telegram_chat_id' => '555', 'telegram_message_id' => 50]);
+        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 51]])]);
+
+        // A reply to some other bot message, e.g. "already waiting".
+        app(UpdateHandler::class)->handle(['update_id' => 6, 'message' => [
+            'message_id' => 97, 'from' => ['id' => 9, 'username' => 'adam'], 'chat' => ['id' => 555],
+            'text' => self::ANSWER, 'reply_to_message' => ['message_id' => 12],
+        ]]);
+
+        $this->assertSame(PostStatus::Draft, $pending->fresh()->status);
+        $this->assertSame('Powerbank kecik tapi padu.', $pending->fresh()->content);
+    }
+
+    public function test_with_several_waiting_posts_an_unaddressed_answer_only_gets_the_hint(): void
+    {
+        [$product, $account, $campaign] = $this->setUpCampaign(ContentSource::Manual);
+        $first = app(DraftWriter::class)->createPending($product, $account, $campaign);
+        app(DraftWriter::class)->createPending(Product::factory()->for($product->affiliateAccount)->create(['affiliate_link' => 'https://s.shopee.com.my/two']), $account, $campaign);
+        Http::fake([self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]])]);
+
+        app(UpdateHandler::class)->handle(['update_id' => 7, 'message' => [
+            'message_id' => 96, 'from' => ['id' => 9, 'username' => 'adam'], 'chat' => ['id' => 555], 'text' => self::ANSWER,
+        ]]);
+
+        $this->assertSame(PostStatus::Pending, $first->fresh()->status);
+        Http::assertSent(fn (Request $r) => str_contains($r['text'], 'reply to its message'));
     }
 
     public function test_messages_from_other_chats_get_no_hint(): void

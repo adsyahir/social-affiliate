@@ -107,6 +107,21 @@ class ManualContentTest extends TestCase
         $this->assertDatabaseCount('posts', 0);
     }
 
+    public function test_unfilled_template_brackets_are_refused(): void
+    {
+        [$product, $account] = $this->setUpCampaign();
+
+        try {
+            app(DraftWriter::class)->createFromText($product, $account, "POST:\nDah guna [berapa lama]. Saiz [saiz korang].\nREPLY:\nSini {link}");
+            $this->fail('Expected the template to be refused.');
+        } catch (ContentInvalidException $e) {
+            $this->assertStringContainsString('[berapa lama]', $e->getMessage());
+            $this->assertStringContainsString('[saiz korang]', $e->getMessage());
+        }
+
+        $this->assertDatabaseCount('posts', 0);
+    }
+
     public function test_personal_claims_in_your_own_text_are_a_warning_not_a_block(): void
     {
         [$product, $account] = $this->setUpCampaign();

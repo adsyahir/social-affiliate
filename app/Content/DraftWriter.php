@@ -228,6 +228,13 @@ class DraftWriter
 
         $problems = $this->rules->check($parsed, $product, $this->maxLength($account), includePersonalClaim: false);
 
+        // A template whose [blanks] were never filled in must not reach the platform.
+        preg_match_all('/\[[^\]\n]+\]/u', $parsed->post."\n".$parsed->linkReply, $blanks);
+
+        if ($blanks[0] !== []) {
+            $problems[] = 'Fill in the parts in brackets first: '.implode(', ', array_unique($blanks[0])).'.';
+        }
+
         if ($problems !== []) {
             throw new ContentInvalidException($problems);
         }

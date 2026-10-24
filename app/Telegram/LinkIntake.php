@@ -43,6 +43,7 @@ class LinkIntake
     public function __construct(
         private readonly TelegramBot $bot,
         private readonly AffiliateProviderFactory $affiliates,
+        private readonly ApprovalChat $chat,
     ) {}
 
     /**
@@ -187,11 +188,16 @@ class LinkIntake
             ->whereIn('status', [PostStatus::Pending, PostStatus::Draft])
             ->first();
 
-        // The lock covers the time before the job has created the post, e.g. a double tap.
-        if ($open !== null || ! Cache::add("telegram-start:{$product->id}:{$account->id}", true, now()->addMinutes(self::START_LOCK_MINUTES))) {
-            $this->say($chatId, $replyTo, $open !== null
-                ? "Post #{$open->id} for this product on \"{$account->name}\" is already waiting in this chat."
-                : "A post for this product on \"{$account->name}\" is already being started.");
+        // Already waiting: bring it down here, so you can reply to it straight away.
+        if ($open !== null) {
+            $this->chat->continueBelow($open, $replyTo, '⬆️ This post was already waiting. Reply to this message with your text.');
+
+            return false;
+        }
+
+        // Covers the time before the job has created the post, e.g. a double tap.
+        if (! Cache::add("telegram-start:{$product->id}:{$account->id}", true, now()->addMinutes(self::START_LOCK_MINUTES))) {
+            $this->say($chatId, $replyTo, "A post for this product on \"{$account->name}\" is already being started.");
 
             return false;
         }

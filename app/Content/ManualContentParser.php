@@ -15,6 +15,14 @@ class ManualContentParser
      */
     private const LABEL = '/^[ \t>#*_]*(POST|REPLY)[ \t*_]*:[ \t*_]*/mi';
 
+    /**
+     * Whether the text is a whole answer in the POST: / REPLY: format.
+     */
+    public static function looksLikeAnswer(string $text): bool
+    {
+        return preg_match('/^[ \t>#*_]*POST[ \t*_]*:/mi', $text) === 1;
+    }
+
     public function parse(string $text, ?string $reply = null): GeneratedText
     {
         // Claude sometimes wraps its answer in a code block.

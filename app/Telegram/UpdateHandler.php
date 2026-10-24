@@ -4,6 +4,7 @@ namespace App\Telegram;
 
 use App\Content\DraftWriter;
 use App\Content\Exceptions\ContentGenerationException;
+use App\Content\ManualContentParser;
 use App\Enums\PostStatus;
 use App\Jobs\PublishPost;
 use App\Jobs\RegenerateDraft;
@@ -22,6 +23,7 @@ class UpdateHandler
         private readonly TelegramBot $bot,
         private readonly DraftWriter $writer,
         private readonly LinkIntake $links,
+        private readonly ApprovalChat $chat,
     ) {}
 
     /**
@@ -53,6 +55,15 @@ class UpdateHandler
             return;
         }
 
+        $waiting = Post::query()->where('status', PostStatus::Pending)->orderBy('id')->get();
+
+        // A "POST:" answer sent to the wrong message: with only one post waiting, it is clearly for that one.
+        if ($waiting->count() === 1 && ManualContentParser::looksLikeAnswer($text)) {
+            $this->useYourText($waiting->first(), $text, $chatId, (int) $message['message_id']);
+
+            return;
+        }
+
         $entities = $message['entities'] ?? [];
 
         if (LinkIntake::containsLink($text, $entities)) {
@@ -61,11 +72,10 @@ class UpdateHandler
             return;
         }
 
-        $waiting = Post::query()->where('status', PostStatus::Pending)->orderBy('id')->pluck('id');
         $hint = 'Send a Shopee or Amazon product link to start a post. To give a post its text, reply to its message (long-press it, then Reply).';
 
         if ($waiting->isNotEmpty()) {
-            $hint .= ' Waiting for your text: '.$waiting->map(fn (int $id): string => "#{$id}")->implode(', ').'.';
+            $hint .= ' Waiting for your text: '.$waiting->map(fn (Post $post): string => "#{$post->id}")->implode(', ').'.';
         }
 
         $this->safely(fn () => $this->bot->sendMessage($chatId, e($hint), replyToMessageId: (int) $message['message_id']));
@@ -172,7 +182,7 @@ class UpdateHandler
             return;
         }
 
-        $this->continueBelow($post->fresh(), $replyTo, '✏️ Your new text.');
+        $this->chat->continueBelow($post->fresh(), $replyTo, '✏️ Your new text.');
     }
 
     /**
@@ -212,7 +222,7 @@ class UpdateHandler
 
         // Buttons go away while rewriting, so nobody approves the version being replaced.
         $note = $feedback === null ? '🔄 Writing a new version...' : '🔄 Rewriting with your notes: '.Str::limit($feedback, 300);
-        $replyTo === null ? $this->show($post, $note, buttons: false) : $this->continueBelow($post, $replyTo, $note, buttons: false);
+        $replyTo === null ? $this->show($post, $note, buttons: false) : $this->chat->continueBelow($post, $replyTo, $note, buttons: false);
         RegenerateDraft::dispatch($post, $feedback);
 
         return true;
@@ -233,39 +243,6 @@ class UpdateHandler
             DraftMessage::text($post, $note),
             $buttons ? DraftMessage::keyboard($post) : null,
         ));
-    }
-
-    /**
-     * After you reply, the draft (and its buttons) carries on in a new message under your reply,
-     * and the old message points down to it. Later updates edit the new message.
-     */
-    private function continueBelow(Post $post, int $replyTo, ?string $note = null, bool $buttons = true): void
-    {
-        $oldMessageId = $post->telegram_message_id;
-
-        try {
-            $newMessageId = $this->bot->sendMessage(
-                (string) $post->telegram_chat_id,
-                DraftMessage::text($post, $note),
-                $buttons ? DraftMessage::keyboard($post) : null,
-                $replyTo,
-            );
-        } catch (TelegramException $e) {
-            Log::warning('Telegram update failed', ['error' => $e->getMessage()]);
-            $this->show($post, $note, $buttons);
-
-            return;
-        }
-
-        $post->forceFill(['telegram_message_id' => $newMessageId])->saveQuietly();
-
-        if ($oldMessageId !== null) {
-            $this->safely(fn () => $this->bot->editMessageText(
-                (string) $post->telegram_chat_id,
-                $oldMessageId,
-                "<i>Post #{$post->id} continues below ⬇️</i>",
-            ));
-        }
     }
 
     /**

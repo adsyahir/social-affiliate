@@ -142,13 +142,17 @@ class LinkIntakeTest extends TestCase
         [, $campaign] = $this->shopeeCampaign();
         $account = $this->account($campaign, 'adamdigitalp');
         $product = Product::factory()->for($campaign->affiliateAccount)->create(['affiliate_link' => self::SHORT_LINK]);
-        app(DraftWriter::class)->createPending($product, $account, $campaign);
+        $pending = app(DraftWriter::class)->createPending($product, $account, $campaign);
+        $pending->update(['telegram_chat_id' => '555', 'telegram_message_id' => 30]);
 
         $this->send(self::SHORT_LINK);
         $this->tap($this->buttons()['✍️ I write']);
 
         Queue::assertNotPushed(GenerateDraft::class);
-        Http::assertSent(fn (Request $r) => str_contains($r['text'], 'already waiting'));
+        // The waiting post comes down to the bottom of the chat, ready to reply to.
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/sendMessage') && str_contains($r['text'], 'Your turn: post #'.$pending->id));
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/editMessageText') && $r['message_id'] === 30 && str_contains($r['text'], 'continues below'));
+        $this->assertSame(70, $pending->fresh()->telegram_message_id);
     }
 
     public function test_buttons_cannot_pair_a_link_with_an_account_outside_its_campaigns(): void
