@@ -32,12 +32,7 @@ class ThreadsPublisher implements RefreshesAccessToken, SocialPublisher
 
     private const METRICS = ['views', 'likes', 'replies', 'reposts'];
 
-    private ?string $userId;
-
-    public function __construct(private readonly SocialAccount $account)
-    {
-        $this->userId = $account->external_id;
-    }
+    public function __construct(private readonly SocialAccount $account) {}
 
     public static function hasInsights(): bool
     {
@@ -100,9 +95,9 @@ class ThreadsPublisher implements RefreshesAccessToken, SocialPublisher
     {
         $this->validate($content);
         $client = $this->client();
-        $userId = $this->userId();
 
-        $container = $client->post(self::VERSION."/{$userId}/threads", [
+        // "me" is the profile the token belongs to, so a wrong saved account ID cannot misdirect a post.
+        $container = $client->post(self::VERSION.'/me/threads', [
             ...$content->imageUrl === null
                 ? ['media_type' => 'TEXT']
                 : ['media_type' => 'IMAGE', 'image_url' => $content->imageUrl],
@@ -112,7 +107,7 @@ class ThreadsPublisher implements RefreshesAccessToken, SocialPublisher
 
         $this->waitUntilReady($client, (string) $container['id']);
 
-        $published = $this->publishOnce('Threads', fn (): array => $client->post(self::VERSION."/{$userId}/threads_publish", ['creation_id' => (string) $container['id']]));
+        $published = $this->publishOnce('Threads', fn (): array => $client->post(self::VERSION.'/me/threads_publish', ['creation_id' => (string) $container['id']]));
 
         $id = (string) $published['id'];
 
@@ -192,11 +187,6 @@ class ThreadsPublisher implements RefreshesAccessToken, SocialPublisher
         }
 
         return $length;
-    }
-
-    private function userId(): string
-    {
-        return $this->userId ??= $this->verify()->id;
     }
 
     private function client(): GraphClient

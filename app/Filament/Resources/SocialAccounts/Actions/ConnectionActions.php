@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\SocialAccounts\Actions;
 
+use App\Enums\SocialPlatform;
 use App\Models\SocialAccount;
 use App\Social\Contracts\RefreshesAccessToken;
 use App\Social\Contracts\SocialPublisher;
@@ -42,8 +43,10 @@ class ConnectionActions
             ->action(function (SocialAccount $record, Action $action, mixed $livewire): void {
                 $profile = self::attempt($action, 'Connection failed', fn () => self::publisher($record)->verify());
 
-                // The platform's own ID is needed to publish; fill it in rather than asking for it.
-                if (blank($record->external_id)) {
+                // Fill the platform's ID in rather than asking for it. A Threads token can only ever
+                // act as one profile, so a different saved ID is simply wrong and is corrected.
+                if (blank($record->external_id)
+                    || ($record->platform === SocialPlatform::Threads && ! $profile->identifies((string) $record->external_id))) {
                     $record->update(['external_id' => $profile->id]);
                     self::refreshForm($livewire, ['external_id']);
                 }

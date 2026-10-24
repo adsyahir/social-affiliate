@@ -118,7 +118,7 @@ class SocialAccountForm
 
         return match ($platform) {
             SocialPlatform::Threads => [
-                'id' => 'Threads user ID. Leave empty and use Connection > Check connection to fill it in.',
+                'id' => 'Leave empty: Connection > Check connection fills in the Threads user ID (not the Meta App ID).',
                 'token' => 'Long-lived Threads access token (threads_basic, threads_content_publish, threads_manage_replies, threads_manage_insights). It is refreshed automatically.',
             ],
             SocialPlatform::FacebookPage => [

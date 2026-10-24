@@ -97,6 +97,20 @@ class SocialAccountConnectionTest extends TestCase
         $this->assertSame('1789', $account->fresh()->external_id);
     }
 
+    public function test_check_connection_corrects_a_wrong_threads_id(): void
+    {
+        $this->actingAs(User::factory()->create());
+        $account = $this->threadsAccount(['external_id' => '1547521060477411']);
+        Http::fake([self::BASE.'/v1.0/me*' => Http::response(['id' => '1789', 'username' => 'gadgets'])]);
+
+        Livewire::test(EditSocialAccount::class, ['record' => $account->getRouteKey()])
+            ->callAction('checkConnection')
+            ->assertNotified('Connected as @gadgets')
+            ->assertSchemaStateSet(['external_id' => '1789']);
+
+        $this->assertSame('1789', $account->fresh()->external_id);
+    }
+
     public function test_check_connection_accepts_a_channel_given_by_its_name(): void
     {
         $this->actingAs(User::factory()->create());

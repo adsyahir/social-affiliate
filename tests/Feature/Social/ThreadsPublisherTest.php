@@ -45,13 +45,13 @@ class ThreadsPublisherTest extends TestCase
         $this->assertSame('https://www.threads.com/@gadgets/post/abc', $post->permalink);
 
         Http::assertSent(fn (Request $r) => $r->method() === 'POST'
-            && $r->url() === self::BASE.'/v1.0/1789/threads'
+            && $r->url() === self::BASE.'/v1.0/me/threads'
             && $r['media_type'] === 'TEXT'
             && $r['text'] === 'Best earbuds under $50 right now?'
             && $r['access_token'] === 'token-abc'
             && ! isset($r['reply_to_id']));
         Http::assertSent(fn (Request $r) => $r->method() === 'POST'
-            && $r->url() === self::BASE.'/v1.0/1789/threads_publish'
+            && $r->url() === self::BASE.'/v1.0/me/threads_publish'
             && $r['creation_id'] === 'container-1');
         Sleep::assertNeverSlept();
     }
@@ -63,7 +63,7 @@ class ThreadsPublisherTest extends TestCase
         $this->publisher()->reply('media-1', new PostContent('Link: https://s.shopee.com.my/abc (affiliate link)'));
 
         Http::assertSent(fn (Request $r) => $r->method() === 'POST'
-            && str_ends_with($r->url(), '/1789/threads')
+            && str_ends_with($r->url(), '/me/threads')
             && $r['reply_to_id'] === 'media-1');
     }
 
@@ -73,7 +73,7 @@ class ThreadsPublisherTest extends TestCase
 
         $this->publisher()->publish(new PostContent('Look at this lamp', imageUrl: 'https://cdn.example.com/lamp.jpg'));
 
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/1789/threads')
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/me/threads')
             && $r['media_type'] === 'IMAGE'
             && $r['image_url'] === 'https://cdn.example.com/lamp.jpg');
     }
@@ -173,13 +173,15 @@ class ThreadsPublisherTest extends TestCase
         $this->assertSame('gadgets', $profile->username);
     }
 
-    public function test_user_id_is_looked_up_when_the_account_has_none(): void
+    public function test_posts_go_to_the_tokens_profile_whatever_id_is_saved(): void
     {
         $this->fakeThreads();
 
-        $this->publisher(['external_id' => null])->publish(new PostContent('Hello'));
+        // A Meta App ID pasted into the account ID field, as happened on the first real setup.
+        $this->publisher(['external_id' => '1547521060477411'])->publish(new PostContent('Hello'));
 
-        Http::assertSent(fn (Request $r) => $r->url() === self::BASE.'/v1.0/1789/threads_publish');
+        Http::assertSent(fn (Request $r) => $r->url() === self::BASE.'/v1.0/me/threads_publish');
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '1547521060477411'));
     }
 
     public function test_api_errors_are_classified(): void
