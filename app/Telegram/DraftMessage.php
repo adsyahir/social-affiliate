@@ -4,6 +4,7 @@ namespace App\Telegram;
 
 use App\Content\DraftWriter;
 use App\Enums\PostStatus;
+use App\Enums\SocialPlatform;
 use App\Models\Post;
 
 /**
@@ -142,9 +143,16 @@ class DraftMessage
      */
     private static function photoLines(Post $post): array
     {
-        $url = $post->imageUrl();
+        $urls = $post->imageUrls();
+        $link = fn (string $url, string $label): string => '<a href="'.htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'">'.$label.'</a>';
 
-        return $url === null ? [] : ['', '🖼 <a href="'.htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'">Photo</a> (posted with the text)'];
+        return match (count($urls)) {
+            0 => [],
+            1 => ['', '🖼 '.$link($urls[0], 'Photo').' (posted with the text)'],
+            default => ['', '🖼 '.count($urls).' photos'.($post->socialAccount?->platform === SocialPlatform::FacebookPage
+                ? ' (Facebook posts the first): '
+                : ', posted as a carousel: ').implode(' ', array_map($link, $urls, range(1, count($urls))))],
+        };
     }
 
     private static function e(string $text): string

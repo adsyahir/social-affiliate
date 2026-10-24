@@ -40,7 +40,26 @@ class PhotoStore
      */
     public function save(array $message): string
     {
-        $file = self::file($message) ?? throw new PhotoException('Send the picture as a photo (or a JPEG or PNG file).');
+        return $this->saveFile(self::file($message) ?? throw new PhotoException('Send the picture as a photo (or a JPEG or PNG file).'));
+    }
+
+    /**
+     * @param  array<string, mixed>  $message
+     * @return array{file_id: string, file_size?: int}|null
+     */
+    public static function fileOf(array $message): ?array
+    {
+        return self::file($message);
+    }
+
+    /**
+     * @param  array{file_id: string, file_size?: int}  $file
+     * @return string the public URL of the saved image
+     *
+     * @throws PhotoException
+     */
+    public function saveFile(array $file): string
+    {
         $tooLarge = 'That photo is over 5 MB. Send it as a normal photo (Telegram makes it smaller) or a smaller file.';
 
         if (($file['file_size'] ?? 0) > self::MAX_BYTES) {
@@ -88,6 +107,7 @@ class PhotoStore
     {
         if (! self::isOurs($url)
             || Post::query()->where('image_url', $url)->exists()
+            || Post::query()->whereJsonContains('images', $url)->exists()
             || Product::query()->where('image_url', $url)->exists()) {
             return;
         }

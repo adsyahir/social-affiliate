@@ -30,6 +30,11 @@ class ThreadsPublisher implements RefreshesAccessToken, SocialPublisher
 
     private const MAX_LINKS = 5;
 
+    /**
+     * Threads allows 2 to 20 items in a carousel.
+     */
+    private const MAX_CAROUSEL = 20;
+
     private const METRICS = ['views', 'likes', 'replies', 'reposts'];
 
     public function __construct(private readonly SocialAccount $account) {}
@@ -96,11 +101,15 @@ class ThreadsPublisher implements RefreshesAccessToken, SocialPublisher
         $this->validate($content);
         $client = $this->client();
 
+        $images = $content->images();
+
         // "me" is the profile the token belongs to, so a wrong saved account ID cannot misdirect a post.
         $container = $client->post(self::VERSION.'/me/threads', [
-            ...$content->imageUrl === null
-                ? ['media_type' => 'TEXT']
-                : ['media_type' => 'IMAGE', 'image_url' => $content->imageUrl],
+            ...match (count($images)) {
+                0 => ['media_type' => 'TEXT'],
+                1 => ['media_type' => 'IMAGE', 'image_url' => $images[0]],
+                default => ['media_type' => 'CAROUSEL', 'children' => implode(',', $this->carouselItems($client, $images))],
+            },
             'text' => $content->text,
             ...$extra,
         ]);
@@ -112,6 +121,27 @@ class ThreadsPublisher implements RefreshesAccessToken, SocialPublisher
         $id = (string) $published['id'];
 
         return new PublishedPost($id, $this->permalink($client, $id));
+    }
+
+    /**
+     * One container per photo; the carousel container then lists them in order.
+     *
+     * @param  list<string>  $images
+     * @return list<string>
+     */
+    private function carouselItems(GraphClient $client, array $images): array
+    {
+        // All created first, so Threads prepares them in parallel; then each is checked.
+        $ids = array_map(
+            fn (string $image): string => (string) $client->post(self::VERSION.'/me/threads', ['media_type' => 'IMAGE', 'image_url' => $image, 'is_carousel_item' => true])['id'],
+            array_slice($images, 0, self::MAX_CAROUSEL),
+        );
+
+        foreach ($ids as $id) {
+            $this->waitUntilReady($client, $id);
+        }
+
+        return $ids;
     }
 
     /**

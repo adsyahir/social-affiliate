@@ -76,8 +76,8 @@ class PostForm
                             ->label('Photo URL')
                             ->url()
                             ->maxLength(2048)
-                            ->helperText(fn (?Post $record): string => 'Posted with the text. Reply to the post in Telegram with a photo to set it.'
-                                .(blank($record?->image_url) && filled($record?->product?->image_url) ? ' Empty: the product\'s photo is used.' : ''))
+                            ->helperText(fn (?Post $record): string => 'Posted with the text. Reply to the post in Telegram with a photo, or an album for a carousel, to set it.'
+                                .(count($record?->imageUrls() ?? []) > 1 ? ' This post has '.count($record->imageUrls()).' photos (a carousel); this is the first, and changing it replaces them all.' : ''))
                             ->disabled(fn (?Post $record): bool => ! self::editable($record) && $record?->status !== PostStatus::Pending)
                             ->columnSpanFull(),
                     ]),

@@ -43,6 +43,23 @@ class ApprovalChat
         }
     }
 
+    /**
+     * Brings the post's current message up to date where it is (e.g. more photos of an album arrived).
+     */
+    public function refresh(Post $post, ?string $note = null): void
+    {
+        if ($post->telegram_message_id === null) {
+            return;
+        }
+
+        $this->safely(fn () => $this->bot->editMessageText(
+            (string) $post->telegram_chat_id,
+            $post->telegram_message_id,
+            DraftMessage::text($post, $note),
+            DraftMessage::keyboard($post),
+        ));
+    }
+
     private function safely(callable $call): void
     {
         try {

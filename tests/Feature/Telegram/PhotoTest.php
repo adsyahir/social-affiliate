@@ -8,6 +8,7 @@ use App\Enums\PostStatus;
 use App\Enums\SocialPlatform;
 use App\Jobs\PublishPost;
 use App\Jobs\RegenerateDraft;
+use App\Jobs\SettleAlbum;
 use App\Models\AffiliateAccount;
 use App\Models\Campaign;
 use App\Models\Post;
@@ -166,6 +167,196 @@ class PhotoTest extends TestCase
         Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/getFile') && $r['file_id'] === 'big');
     }
 
+    public function test_an_album_reply_attaches_all_its_photos_in_order_once_it_settles(): void
+    {
+        Queue::fake();
+        [$post] = $this->waitingPost();
+        $this->fakeTelegram();
+
+        // As Telegram sends it: only the first photo is a reply and carries the caption.
+        $this->album('album-1', [101 => 'p1', 102 => 'p2', 103 => 'p3'], replyTo: 50, caption: "POST:\nPadu.\nREPLY:\nSini {link}");
+
+        // Nothing is said while the photos arrive; one job settles the album.
+        Http::assertNotSent(fn (Request $r) => str_ends_with($r->url(), '/sendMessage'));
+        Queue::assertPushed(SettleAlbum::class, 1);
+        $this->settle('album-1');
+
+        $post->refresh();
+        $this->assertSame('Padu.', $post->content);
+        $this->assertCount(3, $post->imageUrls());
+        $this->assertSame($post->imageUrls()[0], $post->image_url);
+        $this->assertSame($post->image_url, $post->product->image_url);
+        $this->assertCount(1, collect(Http::recorded())->filter(fn ($pair) => str_ends_with($pair[0]->url(), '/sendMessage')));
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/sendMessage') && str_contains($r['text'], '3 photos'));
+    }
+
+    public function test_album_photos_are_kept_in_the_order_they_were_picked(): void
+    {
+        Queue::fake();
+        [$post] = $this->waitingPost();
+        // Each download carries its file ID after the image data, so the saved order can be checked.
+        Http::fake([
+            self::TG.'/getFile' => fn (Request $r) => Http::response(['ok' => true, 'result' => ['file_id' => $r['file_id'], 'file_path' => "photos/{$r['file_id']}.png", 'file_size' => 2000]]),
+            self::FILES.'/*' => fn (Request $r) => Http::response(base64_decode(self::PNG).basename(parse_url($r->url(), PHP_URL_PATH), '.png')),
+            self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 51]]),
+        ]);
+
+        $this->albumPhoto('album-2', 102, 'p2');
+        $this->albumPhoto('album-2', 101, 'p1', replyTo: 50, caption: 'Padu.');
+        $this->albumPhoto('album-2', 103, 'p3');
+        $this->settle('album-2');
+
+        $saved = array_map(
+            fn (string $url): string => substr(Storage::disk('public')->get('post-images/'.basename($url)), -2),
+            $post->fresh()->imageUrls(),
+        );
+        $this->assertSame(['p1', 'p2', 'p3'], $saved);
+        $this->assertSame('Padu.', $post->fresh()->content);
+    }
+
+    public function test_photos_that_arrive_before_the_reply_never_pick_another_post(): void
+    {
+        Queue::fake();
+        [$waiting] = $this->waitingPost();
+        [$draft] = $this->waitingPost();
+        app(DraftWriter::class)->fillFromText($draft, 'Mine');
+        $draft->update(['telegram_message_id' => 60]);
+        $this->fakeTelegram();
+
+        // The reply (to the draft) is processed last; the only waiting post is a different one.
+        $this->albumPhoto('album-3', 102, 'p2');
+        $this->albumPhoto('album-3', 103, 'p3');
+        $this->albumPhoto('album-3', 101, 'p1', replyTo: 60);
+        $this->settle('album-3');
+
+        $this->assertCount(3, $draft->fresh()->imageUrls());
+        $this->assertSame([], $waiting->fresh()->imageUrls());
+    }
+
+    public function test_an_album_with_a_link_caption_starts_a_new_post_and_touches_no_waiting_post(): void
+    {
+        Queue::fake();
+        [$waiting] = $this->waitingPost();
+        $this->fakeTelegram();
+
+        $this->albumPhoto('album-4', 101, 'p1', caption: 'TYESO https://s.shopee.com.my/new');
+        $this->albumPhoto('album-4', 102, 'p2');
+        $this->settle('album-4');
+
+        $this->assertSame([], $waiting->fresh()->imageUrls());
+        Storage::disk('public')->assertDirectoryEmpty('post-images');
+    }
+
+    public function test_an_album_meant_for_no_post_gets_one_hint_and_leaves_no_files(): void
+    {
+        Queue::fake();
+        $this->waitingPost();
+        $this->waitingPost();
+        $this->fakeTelegram();
+
+        $this->albumPhoto('album-5', 101, 'p1');
+        $this->albumPhoto('album-5', 102, 'p2');
+        $this->settle('album-5');
+
+        $this->assertCount(1, collect(Http::recorded())->filter(fn ($pair) => str_contains((string) ($pair[0]->data()['text'] ?? ''), 'with your photos')));
+        Storage::disk('public')->assertDirectoryEmpty('post-images');
+    }
+
+    public function test_a_new_album_replaces_the_old_photos_and_deletes_them(): void
+    {
+        Queue::fake();
+        [$post] = $this->waitingPost();
+        $this->fakeTelegram();
+        $this->album('album-6', [101 => 'p1', 102 => 'p2'], replyTo: 50);
+        $this->settle('album-6');
+        $old = $post->fresh()->imageUrls();
+
+        $this->album('album-7', [201 => 'p3', 202 => 'p4'], replyTo: $post->fresh()->telegram_message_id);
+        $this->settle('album-7');
+
+        $this->assertCount(2, $post->fresh()->imageUrls());
+        $this->assertEmpty(array_intersect($old, $post->fresh()->imageUrls()));
+        foreach ($old as $url) {
+            Storage::disk('public')->assertMissing('post-images/'.basename($url));
+        }
+    }
+
+    public function test_an_album_for_a_published_post_is_refused_once_and_its_files_removed(): void
+    {
+        Queue::fake();
+        [$post] = $this->waitingPost();
+        $post->update(['status' => PostStatus::Published, 'content' => 'Live']);
+        $this->fakeTelegram();
+
+        $this->album('album-8', [101 => 'p1', 102 => 'p2', 103 => 'p3'], replyTo: 50);
+        $this->settle('album-8');
+
+        $this->assertSame([], $post->fresh()->imageUrls());
+        $this->assertCount(1, collect(Http::recorded())->filter(fn ($pair) => str_contains((string) ($pair[0]->data()['text'] ?? ''), 'already published')));
+        Storage::disk('public')->assertDirectoryEmpty('post-images');
+    }
+
+    public function test_a_bad_photo_in_an_album_is_reported_once(): void
+    {
+        Queue::fake();
+        [$post] = $this->waitingPost();
+        Http::fake([
+            self::TG.'/getFile' => fn (Request $r) => Http::response(['ok' => true, 'result' => ['file_id' => $r['file_id'], 'file_path' => "photos/{$r['file_id']}.png", 'file_size' => 2000]]),
+            self::FILES.'/photos/bad.png' => Http::response('%PDF not an image'),
+            self::FILES.'/*' => Http::response(base64_decode(self::PNG)),
+            self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 51]]),
+        ]);
+
+        $this->album('album-9', [101 => 'bad', 102 => 'p2', 103 => 'p3'], replyTo: 50);
+        $this->settle('album-9');
+
+        $this->assertCount(2, $post->fresh()->imageUrls());
+        $this->assertCount(1, collect(Http::recorded())->filter(fn ($pair) => str_contains((string) ($pair[0]->data()['text'] ?? ''), 'JPEG or PNG')));
+    }
+
+    public function test_an_album_cannot_change_a_post_approved_while_it_was_arriving(): void
+    {
+        Queue::fake();
+        [$post] = $this->waitingPost();
+        app(DraftWriter::class)->fillFromText($post, 'Mine');
+        $this->fakeTelegram();
+
+        $this->album('album-10', [101 => 'p1', 102 => 'p2'], replyTo: 50);
+        $post->update(['status' => PostStatus::Approved]);
+        $this->settle('album-10');
+
+        $this->assertSame([], $post->fresh()->imageUrls());
+    }
+
+    public function test_editing_the_photo_url_in_the_admin_replaces_the_photos(): void
+    {
+        [$post] = $this->waitingPost();
+        $post->update(['image_url' => 'https://affiliate.example.com/storage/post-images/a.jpg', 'images' => ['https://affiliate.example.com/storage/post-images/a.jpg', 'https://affiliate.example.com/storage/post-images/b.jpg']]);
+
+        $post->update(['image_url' => 'https://example.com/new.jpg']);
+        $this->assertSame(['https://example.com/new.jpg'], $post->fresh()->imageUrls());
+
+        $post->update(['image_url' => null]);
+        $this->assertSame([], $post->fresh()->imageUrls());
+    }
+
+    public function test_the_draft_lists_every_photo(): void
+    {
+        [$post] = $this->waitingPost();
+        app(DraftWriter::class)->fillFromText($post, 'Mine');
+        $post->update(['images' => ['https://affiliate.example.com/storage/post-images/a.jpg', 'https://affiliate.example.com/storage/post-images/b.jpg']]);
+
+        $text = DraftMessage::text($post->fresh());
+
+        $this->assertStringContainsString('2 photos', $text);
+        $this->assertStringContainsString('carousel', $text);
+        $this->assertStringContainsString('b.jpg', $text);
+
+        // Facebook Pages publish only the first photo, and the draft says so.
+        $post->socialAccount->update(['platform' => SocialPlatform::FacebookPage]);
+        $this->assertStringContainsString('Facebook posts the first', DraftMessage::text($post->fresh()));
+    }
+
     public function test_the_draft_message_shows_the_photo(): void
     {
         [$post] = $this->waitingPost();
@@ -245,42 +436,6 @@ class PhotoTest extends TestCase
 
         Storage::disk('public')->assertMissing('post-images/'.$first);
         Storage::disk('public')->assertExists('post-images/'.basename($post->fresh()->image_url));
-    }
-
-    public function test_the_rest_of_an_album_gets_no_hints(): void
-    {
-        [$post] = $this->waitingPost();
-        $this->fakeTelegram();
-
-        // As Telegram sends it: only the first photo is a reply and carries the caption.
-        foreach (['p1', 'p2', 'p3', 'p4'] as $i => $fileId) {
-            app(UpdateHandler::class)->handle(['update_id' => 30 + $i, 'message' => array_filter([
-                'message_id' => 110 + $i, 'from' => ['id' => 9, 'username' => 'adam'], 'chat' => ['id' => 555],
-                'media_group_id' => 'album-2', 'photo' => [['file_id' => $fileId, 'file_size' => 2000]],
-                'caption' => $i === 0 ? "POST:\nPadu.\nREPLY:\nSini {link}" : null,
-                'reply_to_message' => $i === 0 ? ['message_id' => 50] : null,
-            ], fn ($value) => $value !== null)]);
-        }
-
-        $this->assertSame('Padu.', $post->fresh()->content);
-        Http::assertNotSent(fn (Request $r) => str_contains((string) ($r->data()['text'] ?? ''), 'Send a Shopee or Amazon'));
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/getFile'), 1);
-    }
-
-    public function test_only_the_first_photo_of_an_album_is_used(): void
-    {
-        [$post] = $this->waitingPost();
-        $this->fakeTelegram();
-
-        foreach (['p1', 'p2', 'p3'] as $i => $fileId) {
-            app(UpdateHandler::class)->handle(['update_id' => 20 + $i, 'message' => [
-                'message_id' => 100 + $i, 'from' => ['id' => 9, 'username' => 'adam'], 'chat' => ['id' => 555],
-                'media_group_id' => 'album-1', 'photo' => [['file_id' => $fileId, 'file_size' => 2000]],
-                'reply_to_message' => ['message_id' => 50],
-            ]]);
-        }
-
-        Http::assertSentCount(1 + 1 + 2); // one getFile, one download, the new message and the "continues below" edit
     }
 
     public function test_telegram_channel_posts_go_out_as_a_photo_with_the_text_as_caption(): void
@@ -368,6 +523,34 @@ class PhotoTest extends TestCase
             self::FILES.'/*' => Http::response($body ?? base64_decode(self::PNG)),
             self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 51]]),
         ]);
+    }
+
+    /**
+     * @param  array<int, string>  $photos  message ID => file ID; the first is the reply with the caption
+     */
+    private function album(string $groupId, array $photos, int $replyTo, ?string $caption = null): void
+    {
+        $first = true;
+
+        foreach ($photos as $messageId => $fileId) {
+            $this->albumPhoto($groupId, $messageId, $fileId, $first ? $replyTo : null, $first ? $caption : null);
+            $first = false;
+        }
+    }
+
+    private function albumPhoto(string $groupId, int $messageId, string $fileId, ?int $replyTo = null, ?string $caption = null): void
+    {
+        app(UpdateHandler::class)->handle(['update_id' => $messageId, 'message' => array_filter([
+            'message_id' => $messageId, 'from' => ['id' => 9, 'username' => 'adam'], 'chat' => ['id' => 555],
+            'media_group_id' => $groupId, 'photo' => [['file_id' => $fileId, 'file_size' => 2000]],
+            'caption' => $caption,
+            'reply_to_message' => $replyTo === null ? null : ['message_id' => $replyTo],
+        ], fn ($value) => $value !== null)]);
+    }
+
+    private function settle(string $albumId): void
+    {
+        app()->call([new SettleAlbum($albumId), 'handle']);
     }
 
     private function replyWithPhoto(int $toMessageId, ?string $caption): void

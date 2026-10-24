@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
-    'campaign_id', 'product_id', 'social_account_id', 'content', 'link_reply_content', 'image_url', 'generation',
+    'campaign_id', 'product_id', 'social_account_id', 'content', 'link_reply_content', 'image_url', 'images', 'generation',
     'status', 'approved_at', 'approved_by', 'external_post_id', 'permalink', 'link_reply_id', 'published_at', 'last_error',
     'telegram_chat_id', 'telegram_message_id',
 ])]
@@ -25,6 +25,11 @@ class Post extends Model
     protected static function booted(): void
     {
         static::saving(function (Post $post) {
+            // Editing the single photo (e.g. in the admin) replaces the whole set; clearing it removes them.
+            if ($post->isDirty('image_url') && ! $post->isDirty('images')) {
+                $post->images = filled($post->image_url) ? [$post->image_url] : null;
+            }
+
             if ($post->isDirty(['campaign_id', 'social_account_id', 'product_id'])) {
                 $post->ensureBelongsToCampaign();
             }
@@ -43,6 +48,7 @@ class Post extends Model
             'published_at' => 'datetime',
             'approved_at' => 'datetime',
             'generation' => 'array',
+            'images' => 'array',
             'telegram_message_id' => 'integer',
         ];
     }
@@ -101,7 +107,19 @@ class Post extends Model
      */
     public function imageUrl(): ?string
     {
-        return $this->image_url ?: null;
+        return $this->imageUrls()[0] ?? null;
+    }
+
+    /**
+     * All the post's photos, in order: several make a carousel (Threads) or an album (Telegram).
+     *
+     * @return list<string>
+     */
+    public function imageUrls(): array
+    {
+        $images = array_values(array_filter((array) ($this->images ?? []), 'is_string'));
+
+        return $images !== [] ? $images : array_values(array_filter([$this->image_url]));
     }
 
     /**

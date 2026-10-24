@@ -63,23 +63,30 @@ class TelegramChannelPublisher implements SocialPublisher
         $channel = $this->channel();
 
         $id = $this->publishOnce('Telegram', fn (): int => $this->call(function (TelegramBot $bot) use ($channel, $content): int {
+            $images = $content->images();
+
             // No preview on the main post; it has no links anyway.
-            if ($content->imageUrl === null) {
+            if ($images === []) {
                 return $bot->sendText($channel, $content->text);
             }
 
             // Telegram counts the caption in UTF-16 units, as it does message text.
-            if (DraftMessage::telegramLength(htmlspecialchars($content->text, ENT_NOQUOTES)) <= self::MAX_CAPTION) {
-                return $bot->sendPhoto($channel, $content->imageUrl, $content->text);
+            $fits = DraftMessage::telegramLength(htmlspecialchars($content->text, ENT_NOQUOTES)) <= self::MAX_CAPTION;
+            $send = fn (?string $caption): int => count($images) === 1
+                ? $bot->sendPhoto($channel, $images[0], $caption)
+                : $bot->sendMediaGroup($channel, $images, $caption);
+
+            if ($fits) {
+                return $send($content->text);
             }
 
-            // Too long for a caption: the photo, then the text, which the link reply answers.
-            $bot->sendPhoto($channel, $content->imageUrl);
+            // Too long for a caption: the photos, then the text, which the link reply answers.
+            $send(null);
 
             try {
                 return $bot->sendText($channel, $content->text);
             } catch (TelegramException $e) {
-                // The photo is already in the channel; a retry would post it again.
+                // The photos are already in the channel; a retry would post them again.
                 throw new TelegramException("The photo was posted but the text failed: {$e->getMessage()}. Check the channel before retrying.", retryable: false, status: $e->status);
             }
         }));

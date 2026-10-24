@@ -106,6 +106,25 @@ class TelegramBot
     }
 
     /**
+     * An album of photos (2 to 10) for a channel post; the caption goes on the first photo.
+     *
+     * @param  list<string>  $photoUrls
+     * @return int The first message's ID.
+     */
+    public function sendMediaGroup(string $chatId, array $photoUrls, ?string $caption = null): int
+    {
+        $media = array_map(fn (string $url): array => ['type' => 'photo', 'media' => $url], array_slice($photoUrls, 0, 10));
+
+        if ($caption !== null) {
+            $media[0]['caption'] = $caption;
+        }
+
+        $messages = $this->call('sendMediaGroup', ['chat_id' => $chatId, 'media' => $media]);
+
+        return (int) $messages[0]['message_id'];
+    }
+
+    /**
      * @return array{file_id: string, file_path?: string, file_size?: int}
      */
     public function getFile(string $fileId): array

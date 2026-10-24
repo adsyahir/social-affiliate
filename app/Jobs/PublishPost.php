@@ -26,7 +26,8 @@ class PublishPost implements ShouldQueue
 
     public int $tries = 6;
 
-    public int $timeout = 120;
+    // A carousel waits for Threads to prepare each photo.
+    public int $timeout = 300;
 
     public bool $deleteWhenMissingModels = true;
 
@@ -44,7 +45,7 @@ class PublishPost implements ShouldQueue
             $publisher = $publishers->make($post->socialAccount);
 
             if ($post->external_post_id === null) {
-                $published = $publisher->publish(new PostContent($post->content, $post->imageUrl()));
+                $published = $publisher->publish(new PostContent($post->content, $post->imageUrl(), $post->imageUrls()));
                 $post->update(['external_post_id' => $published->id, 'permalink' => $published->permalink]);
             }
 

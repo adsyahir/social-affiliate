@@ -11,7 +11,6 @@ use App\Jobs\RegenerateDraft;
 use App\Models\Post;
 use App\Telegram\Exceptions\PhotoException;
 use App\Telegram\Exceptions\TelegramException;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -27,6 +26,7 @@ class UpdateHandler
         private readonly LinkIntake $links,
         private readonly ApprovalChat $chat,
         private readonly PhotoStore $photos,
+        private readonly AlbumCollector $albums,
     ) {}
 
     /**
@@ -34,14 +34,6 @@ class UpdateHandler
      */
     public function handle(array $update): void
     {
-        // An album arrives as one message per photo, and only the first is a reply with the caption.
-        // The first is handled; the rest are ignored instead of each getting a hint.
-        $album = $update['message']['media_group_id'] ?? null;
-
-        if ($album !== null && ! Cache::add("telegram-album:{$album}", true, now()->addMinutes(10))) {
-            return;
-        }
-
         if (isset($update['callback_query'])) {
             $this->handleCallback($update['callback_query']);
         } elseif (isset($update['message']['reply_to_message'])) {
@@ -63,6 +55,12 @@ class UpdateHandler
         $photo = PhotoStore::hasPhoto($message);
 
         if (($text === '' && ! $photo) || ! $this->authorized($chatId, $message['from'] ?? [])) {
+            return;
+        }
+
+        if (isset($message['media_group_id']) && $photo) {
+            $this->albumPhoto($message, null, $text, $chatId);
+
             return;
         }
 
@@ -170,7 +168,142 @@ class UpdateHandler
             return;
         }
 
+        if (isset($message['media_group_id']) && PhotoStore::hasPhoto($message)) {
+            $this->albumPhoto($message, $post, $text, $chatId);
+
+            return;
+        }
+
         $this->forPost($post, $message, $text, $chatId, (int) $message['message_id']);
+    }
+
+    /**
+     * One photo of an album: gathered, and answered once the whole album is in (settleAlbum).
+     *
+     * @param  array<string, mixed>  $message
+     */
+    private function albumPhoto(array $message, ?Post $post, string $text, string $chatId): void
+    {
+        $entities = $message['caption_entities'] ?? [];
+        $isLink = $post === null && $text !== '' && ! ManualContentParser::looksLikeAnswer($text) && LinkIntake::containsLink($text, $entities);
+
+        $this->albums->record((string) $message['media_group_id'], $message, $chatId, $post, $text, $isLink);
+
+        if ($isLink) {
+            $this->links->handle($chatId, (int) $message['message_id'], $text, $entities);
+        }
+    }
+
+    /**
+     * Puts a gathered album on its post and answers once: your caption as the post text, or
+     * "N photos saved". With no post to go to, one hint, and the photos are removed again.
+     */
+    public function settleAlbum(string $albumId): void
+    {
+        $state = $this->albums->take($albumId);
+
+        if ($state === null || ! isset($state['chat_id'])) {
+            return;
+        }
+
+        $chatId = (string) $state['chat_id'];
+        $photos = $state['photos'] ?? [];
+        ksort($photos);
+        $urls = array_values(array_filter(array_column($photos, 'url')));
+        $caption = (string) ($state['caption'] ?? '');
+        $replyTo = (int) ($state['caption_message'] ?? $state['reply_to'] ?? $state['last_message']);
+        $target = isset($state['post_id']) ? Post::find($state['post_id']) : null;
+
+        // Sent without replying: with one post waiting and nothing else said, it is for that one.
+        if ($target === null && ! isset($state['reply_to']) && ! ($state['link'] ?? false)) {
+            $waiting = Post::query()->where('status', PostStatus::Pending)->get();
+            $target = $waiting->count() === 1 && ($caption === '' || ManualContentParser::looksLikeAnswer($caption)) ? $waiting->first() : null;
+        }
+
+        if ($target === null) {
+            self::discard($urls);
+
+            if (! ($state['link'] ?? false) && ! ($state['hinted'] ?? false)) {
+                $this->safely(fn () => $this->bot->sendMessage($chatId, e('Reply to a post\'s message with your photos (long-press it, then Reply), so I know which post they are for.'), replyToMessageId: $replyTo));
+            }
+
+            $this->albums->remember($albumId, ['hinted' => true]);
+
+            return;
+        }
+
+        $previous = [...$target->imageUrls(), $target->product?->image_url];
+
+        // Only while the post is still unapproved, so an approval made meanwhile cannot change.
+        $changed = $urls === [] ? 1 : Post::query()
+            ->whereKey($target->id)
+            ->whereIn('status', [PostStatus::Pending, PostStatus::Draft, PostStatus::Rejected])
+            ->update(['images' => json_encode($urls), 'image_url' => $urls[0], 'updated_at' => now()]);
+
+        if ($changed === 0) {
+            self::discard($urls);
+
+            if (! ($state['refused'] ?? false)) {
+                $status = $target->fresh()->status->value;
+                $this->safely(fn () => $this->bot->sendMessage($chatId, e("Post #{$target->id} is already {$status}; photos can only be added before it is approved."), replyToMessageId: $replyTo));
+            }
+
+            $this->albums->remember($albumId, ['refused' => true]);
+
+            return;
+        }
+
+        if ($urls !== []) {
+            $target->product?->update(['image_url' => $urls[0]]);
+
+            foreach (array_unique(array_filter($previous)) as $old) {
+                PhotoStore::deleteIfUnused($old);
+            }
+        }
+
+        // Photos that could not be used, each reported once.
+        $reported = $state['reported'] ?? [];
+        $newFailures = [];
+
+        foreach ($photos as $messageId => $photo) {
+            if ($photo['error'] !== null && ! in_array($messageId, $reported, true)) {
+                $newFailures[$messageId] = $photo['error'];
+            }
+        }
+
+        if ($newFailures !== []) {
+            $count = count($newFailures);
+            $reason = reset($newFailures);
+            $this->safely(fn () => $this->bot->sendMessage($chatId, e(($count === 1 ? '1 photo was skipped: ' : "{$count} photos were skipped: ").$reason), replyToMessageId: $replyTo));
+        }
+
+        $post = $target->fresh();
+        $flags = ['reported' => [...$reported, ...array_keys($newFailures)]];
+
+        if ($caption !== '' && ! ($state['caption_applied'] ?? false)) {
+            $this->useText($post, $caption, $chatId, $replyTo, photoSaved: $urls !== []);
+            $flags += ['caption_applied' => true, 'shown' => true];
+        } elseif ($urls !== [] && ! ($state['shown'] ?? false)) {
+            $count = count($urls);
+            $this->chat->continueBelow($post, $replyTo, $post->status === PostStatus::Pending
+                ? "🖼 {$count} ".str('photo')->plural($count).' saved. Now reply to this message with your text.'
+                : "🖼 {$count} ".str('photo')->plural($count).' attached.');
+            $flags['shown'] = true;
+        } elseif ($urls !== []) {
+            $this->chat->refresh($post);
+        }
+
+        $this->albums->remember($albumId, $flags);
+    }
+
+    /**
+     * @param  list<string>  $urls
+     */
+    private static function discard(array $urls): void
+    {
+        foreach ($urls as $url) {
+            PhotoStore::deleteIfUnused($url);
+        }
     }
 
     /**
@@ -199,6 +332,14 @@ class UpdateHandler
             }
         }
 
+        $this->useText($post, $text, $chatId, $replyTo, $photoSaved);
+    }
+
+    /**
+     * Text for a post: your post text, or feedback for an AI draft.
+     */
+    private function useText(Post $post, string $text, string $chatId, int $replyTo, bool $photoSaved = false): void
+    {
         // Posts you write yourself: the reply is the new text, not feedback for the AI.
         if ($post->status === PostStatus::Pending || DraftMessage::writtenByYou($post)) {
             $this->useYourText($post, $text, $chatId, $replyTo, $photoSaved);
@@ -230,11 +371,11 @@ class UpdateHandler
             return false;
         }
 
-        $previous = [$post->image_url, $post->product?->image_url];
+        $previous = [...$post->imageUrls(), $post->product?->image_url];
 
         // The product keeps your latest photo too, so its next post starts with it. Posts that
         // already exist keep their own photo.
-        $post->update(['image_url' => $url]);
+        $post->update(['image_url' => $url, 'images' => [$url]]);
         $post->product?->update(['image_url' => $url]);
 
         foreach (array_unique(array_filter($previous)) as $old) {
