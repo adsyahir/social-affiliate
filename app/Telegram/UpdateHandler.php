@@ -21,6 +21,7 @@ class UpdateHandler
     public function __construct(
         private readonly TelegramBot $bot,
         private readonly DraftWriter $writer,
+        private readonly LinkIntake $links,
     ) {}
 
     /**
@@ -46,12 +47,22 @@ class UpdateHandler
     {
         $chatId = (string) ($message['chat']['id'] ?? '');
 
-        if (trim((string) ($message['text'] ?? '')) === '' || ! $this->authorized($chatId, $message['from'] ?? [])) {
+        $text = trim((string) ($message['text'] ?? ''));
+
+        if ($text === '' || ! $this->authorized($chatId, $message['from'] ?? [])) {
+            return;
+        }
+
+        $entities = $message['entities'] ?? [];
+
+        if (LinkIntake::containsLink($text, $entities)) {
+            $this->links->handle($chatId, (int) $message['message_id'], $text, $entities);
+
             return;
         }
 
         $waiting = Post::query()->where('status', PostStatus::Pending)->orderBy('id')->pluck('id');
-        $hint = 'Reply to a post\'s message (long-press it, then Reply) so I know which post your text is for.';
+        $hint = 'Send a Shopee or Amazon product link to start a post. To give a post its text, reply to its message (long-press it, then Reply).';
 
         if ($waiting->isNotEmpty()) {
             $hint .= ' Waiting for your text: '.$waiting->map(fn (int $id): string => "#{$id}")->implode(', ').'.';
@@ -74,6 +85,17 @@ class UpdateHandler
         }
 
         [$action, $id] = array_pad(explode(':', (string) ($query['data'] ?? ''), 2), 2, null);
+
+        // Buttons under a product link you sent: which account, then who writes it.
+        if ($action === 'start' || $action === 'write') {
+            $messageId = (int) ($query['message']['message_id'] ?? 0);
+            $this->answer($query['id'], $action === 'start'
+                ? $this->links->choose($chatId, $messageId, (string) $id)
+                : $this->links->write($chatId, $messageId, (string) $id));
+
+            return;
+        }
+
         $post = Post::find((int) $id);
 
         if ($post === null) {
@@ -119,7 +141,10 @@ class UpdateHandler
             ->where('telegram_message_id', (int) $message['reply_to_message']['message_id'])
             ->first();
 
+        // A reply to anything that is not a post (e.g. "What is it called?") is read as a new message.
         if ($post === null) {
+            $this->handlePlainMessage($message);
+
             return;
         }
 

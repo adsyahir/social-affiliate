@@ -319,7 +319,8 @@ class ManualFlowTest extends TestCase
 
         $this->assertSame(PostStatus::Pending, $pending->fresh()->status);
         Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/sendMessage')
-            && str_contains($r['text'], 'Reply to')
+            && str_contains($r['text'], 'reply to its message')
+            && str_contains($r['text'], 'product link')
             && str_contains($r['text'], "#{$pending->id}"));
     }
 

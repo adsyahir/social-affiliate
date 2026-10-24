@@ -35,13 +35,15 @@ class GenerateDraft implements ShouldQueue
         public Product $product,
         public Campaign $campaign,
         public ?int $campaignRunId = null,
+        // Chosen per post (from Telegram); the account's own setting otherwise.
+        public ?ContentSource $source = null,
     ) {}
 
     public function handle(DraftWriter $writer): void
     {
         try {
             // Accounts set to "I write them" get a waiting post and the prompt in Telegram instead.
-            $post = $this->account->content_source === ContentSource::Manual
+            $post = ($this->source ?? $this->account->content_source) === ContentSource::Manual
                 ? $writer->createPending($this->product, $this->account, $this->campaign)
                 : $writer->create($this->product, $this->account, $this->campaign);
         } catch (ContentGenerationException $e) {
