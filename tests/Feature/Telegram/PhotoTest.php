@@ -247,6 +247,26 @@ class PhotoTest extends TestCase
         Storage::disk('public')->assertExists('post-images/'.basename($post->fresh()->image_url));
     }
 
+    public function test_the_rest_of_an_album_gets_no_hints(): void
+    {
+        [$post] = $this->waitingPost();
+        $this->fakeTelegram();
+
+        // As Telegram sends it: only the first photo is a reply and carries the caption.
+        foreach (['p1', 'p2', 'p3', 'p4'] as $i => $fileId) {
+            app(UpdateHandler::class)->handle(['update_id' => 30 + $i, 'message' => array_filter([
+                'message_id' => 110 + $i, 'from' => ['id' => 9, 'username' => 'adam'], 'chat' => ['id' => 555],
+                'media_group_id' => 'album-2', 'photo' => [['file_id' => $fileId, 'file_size' => 2000]],
+                'caption' => $i === 0 ? "POST:\nPadu.\nREPLY:\nSini {link}" : null,
+                'reply_to_message' => $i === 0 ? ['message_id' => 50] : null,
+            ], fn ($value) => $value !== null)]);
+        }
+
+        $this->assertSame('Padu.', $post->fresh()->content);
+        Http::assertNotSent(fn (Request $r) => str_contains((string) ($r->data()['text'] ?? ''), 'Send a Shopee or Amazon'));
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/getFile'), 1);
+    }
+
     public function test_only_the_first_photo_of_an_album_is_used(): void
     {
         [$post] = $this->waitingPost();

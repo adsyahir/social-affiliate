@@ -34,6 +34,14 @@ class UpdateHandler
      */
     public function handle(array $update): void
     {
+        // An album arrives as one message per photo, and only the first is a reply with the caption.
+        // The first is handled; the rest are ignored instead of each getting a hint.
+        $album = $update['message']['media_group_id'] ?? null;
+
+        if ($album !== null && ! Cache::add("telegram-album:{$album}", true, now()->addMinutes(10))) {
+            return;
+        }
+
         if (isset($update['callback_query'])) {
             $this->handleCallback($update['callback_query']);
         } elseif (isset($update['message']['reply_to_message'])) {
@@ -176,11 +184,6 @@ class UpdateHandler
         $photoSaved = false;
 
         if (PhotoStore::hasPhoto($message)) {
-            // An album arrives as one update per photo; the first one is used.
-            if (isset($message['media_group_id']) && ! Cache::add("telegram-album:{$message['media_group_id']}", true, now()->addMinutes(10))) {
-                return;
-            }
-
             if (! $this->attachPhoto($post, $message, $chatId, $replyTo)) {
                 return;
             }
