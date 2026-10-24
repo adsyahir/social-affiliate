@@ -3,6 +3,7 @@
 namespace App\Telegram;
 
 use App\Content\DraftWriter;
+use App\Content\PromptBuilder;
 use App\Enums\PostStatus;
 use App\Enums\SocialPlatform;
 use App\Models\Post;
@@ -42,6 +43,9 @@ class DraftMessage
             '',
             '<b>Link reply</b>',
             self::e((string) $post->link_reply_content),
+            ...($post->status === PostStatus::Draft && self::disclosure($post) !== null
+                ? ['', '🏷 Disclosure: '.(self::hasDisclosure($post) ? 'included' : 'not included')]
+                : []),
             ...self::photoLines($post),
             '',
             '<i>'.self::e(self::status($post)).'</i>',
@@ -71,11 +75,16 @@ class DraftMessage
         // Text you wrote is changed by replying with new text, so there is no AI Regenerate button.
         $yours = self::writtenByYou($post);
 
+        // Offered when the account has a disclosure line: add it to this post, or take it out again.
+        $disclosureRow = self::disclosure($post) === null ? [] : [[self::hasDisclosure($post)
+            ? $button('➖ Remove disclosure', 'disc')
+            : $button('➕ Add disclosure', 'disc')]];
+
         return match ($post->status) {
             PostStatus::Pending => [[$button('⏭ Skip', 'reject')]],
-            PostStatus::Draft => $yours
+            PostStatus::Draft => [...$yours
                 ? [[$button('✅ Approve', 'approve'), $button('❌ Reject', 'reject')]]
-                : [[$button('✅ Approve', 'approve'), $button('❌ Reject', 'reject'), $button('🔄 Regenerate', 'regen')]],
+                : [[$button('✅ Approve', 'approve'), $button('❌ Reject', 'reject'), $button('🔄 Regenerate', 'regen')]], ...$disclosureRow],
             PostStatus::Rejected => $yours ? null : [[$button('🔄 Regenerate', 'regen')]],
             PostStatus::Failed => [[$button('🔁 Retry publishing', 'retry')]],
             PostStatus::Approved, PostStatus::Published => null,
@@ -98,6 +107,18 @@ class DraftMessage
                 : "❌ Rejected by {$post->approved_by}. Reply with feedback or tap Regenerate to try again.",
             PostStatus::Failed => '⚠️ Publishing failed: '.($post->last_error ?? 'unknown error'),
         };
+    }
+
+    public static function disclosure(Post $post): ?string
+    {
+        return $post->socialAccount === null ? null : PromptBuilder::disclosure($post->socialAccount);
+    }
+
+    public static function hasDisclosure(Post $post): bool
+    {
+        $disclosure = self::disclosure($post);
+
+        return $disclosure !== null && str_contains(mb_strtolower((string) $post->link_reply_content), mb_strtolower($disclosure));
     }
 
     public static function writtenByYou(Post $post): bool

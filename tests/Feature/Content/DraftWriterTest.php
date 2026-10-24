@@ -26,7 +26,7 @@ class DraftWriterTest extends TestCase
 
     private const DISCLOSURE = 'Link affiliate ya, aku dapat komisen sikit.';
 
-    public function test_draft_gets_the_tracked_link_and_disclosure_and_is_saved(): void
+    public function test_draft_gets_the_tracked_link_and_is_saved_without_the_disclosure(): void
     {
         [$product, $account, $campaign] = $this->setUpCampaign();
         $this->fakeClaude([$this->claudeReply(['post' => 'Powerbank ni padu, 4.9 bintang.', 'link_reply' => 'Boleh grab sini: {link}'], usage: ['input_tokens' => 800, 'output_tokens' => 90])]);
@@ -36,14 +36,16 @@ class DraftWriterTest extends TestCase
         $this->assertSame(PostStatus::Draft, $post->status);
         $this->assertSame($campaign->id, $post->campaign_id);
         $this->assertSame('Powerbank ni padu, 4.9 bintang.', $post->content);
-        $this->assertSame("Boleh grab sini: https://s.shopee.com.my/pasted\n\n".self::DISCLOSURE, $post->link_reply_content);
+        // The disclosure is chosen per post in Telegram, not added automatically.
+        $this->assertSame('Boleh grab sini: https://s.shopee.com.my/pasted', $post->link_reply_content);
+        $this->assertStringNotContainsString('word for word', (string) $this->claudeRequests()[0]->getBody());
         $this->assertSame('claude-sonnet-5-5', $post->generation['model']);
         $this->assertSame(1, $post->generation['attempts']);
         $this->assertSame(800, $post->generation['usage']['input_tokens']);
         $this->assertSame('https://s.shopee.com.my/pasted', $post->generation['link']);
     }
 
-    public function test_disclosure_is_not_added_twice(): void
+    public function test_a_disclosure_the_model_wrote_anyway_is_kept_as_is(): void
     {
         [$product, $account] = $this->setUpCampaign();
         $this->fakeClaude([$this->claudeReply(['post' => 'Best!', 'link_reply' => '{link} '.self::DISCLOSURE])]);

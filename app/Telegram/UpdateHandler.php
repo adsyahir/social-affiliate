@@ -133,6 +133,7 @@ class UpdateHandler
                 ? 'Rejected.' : "Already {$post->fresh()->status->value}.",
             'retry' => $this->transition($post, [PostStatus::Failed], PostStatus::Approved, $by, fn () => PublishPost::dispatch($post))
                 ? 'Publishing again...' : "Already {$post->fresh()->status->value}.",
+            'disc' => $this->toggleDisclosure($post),
             'regen' => $this->regenerate($post, null) ? 'Writing a new version...' : ($post->writtenByYou()
                 ? 'This is your own text. Reply with new text to replace it.'
                 : 'Only drafts and rejected posts can be rewritten.'),
@@ -431,6 +432,43 @@ class UpdateHandler
         }
 
         return true;
+    }
+
+    /**
+     * Adds the account's disclosure under the link, or takes it out again. Only before approval,
+     * and only if the text is still what the button was shown for.
+     */
+    private function toggleDisclosure(Post $post): string
+    {
+        $disclosure = DraftMessage::disclosure($post);
+
+        if ($disclosure === null) {
+            return 'This account has no disclosure line. Set one in the admin under the account\'s persona.';
+        }
+
+        $reply = (string) $post->link_reply_content;
+        $included = DraftMessage::hasDisclosure($post);
+        $new = $included
+            ? trim(str_ireplace(["\n\n{$disclosure}", $disclosure], '', $reply))
+            : rtrim($reply)."\n\n".$disclosure;
+
+        $changed = Post::query()
+            ->whereKey($post->id)
+            ->where('status', PostStatus::Draft)
+            ->where('link_reply_content', $reply)
+            ->update(['link_reply_content' => $new, 'updated_at' => now()]);
+
+        if ($changed === 0) {
+            $status = $post->fresh()->status;
+
+            return $status === PostStatus::Draft
+                ? 'The draft changed meanwhile; tap again.'
+                : "Already {$status->value}; the disclosure can only change before approval.";
+        }
+
+        $this->show($post->fresh());
+
+        return $included ? 'Disclosure removed.' : 'Disclosure added.';
     }
 
     /**

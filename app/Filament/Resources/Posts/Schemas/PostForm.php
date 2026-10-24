@@ -3,7 +3,6 @@
 namespace App\Filament\Resources\Posts\Schemas;
 
 use App\Content\ContentRules;
-use App\Content\PromptBuilder;
 use App\Enums\PostStatus;
 use App\Models\Post;
 use Closure;
@@ -51,7 +50,7 @@ class PostForm
                             ->columnSpanFull(),
                         Textarea::make('link_reply_content')
                             ->label('Link reply')
-                            ->helperText('Posted under the post. Keep the link and the disclosure.')
+                            ->helperText('Posted under the post. Keep the link.')
                             ->rows(4)
                             ->required()
                             ->rule(fn (?Post $record): Closure => function (string $attribute, mixed $value, Closure $fail) use ($record): void {
@@ -62,11 +61,6 @@ class PostForm
                                     $fail("Keep the tracked link in the reply: {$link}");
                                 }
 
-                                $disclosure = $record?->socialAccount !== null ? PromptBuilder::disclosure($record->socialAccount) : null;
-
-                                if ($disclosure !== null && ! str_contains(mb_strtolower($reply), mb_strtolower($disclosure))) {
-                                    $fail('Keep the affiliate disclosure in the reply.');
-                                }
                             })
                             ->live(debounce: 500)
                             ->hint(fn (?string $state): string => mb_strlen((string) $state).' characters')

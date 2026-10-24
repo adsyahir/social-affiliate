@@ -259,15 +259,8 @@ class DraftWriter
      */
     private function fill(GeneratedText $text, SocialAccount $account, string $link): array
     {
-        $reply = str_replace(PromptBuilder::LINK_PLACEHOLDER, $link, $text->linkReply);
-        $disclosure = PromptBuilder::disclosure($account);
-
-        // When the account has a disclosure, every link reply carries it, whatever the model wrote.
-        if ($disclosure !== null && ! str_contains(mb_strtolower($reply), mb_strtolower($disclosure))) {
-            $reply .= "\n\n".$disclosure;
-        }
-
-        return ['content' => $text->post, 'link_reply_content' => $reply];
+        // The disclosure is not added here; each draft has a button in Telegram to add it.
+        return ['content' => $text->post, 'link_reply_content' => str_replace(PromptBuilder::LINK_PLACEHOLDER, $link, $text->linkReply)];
     }
 
     /**

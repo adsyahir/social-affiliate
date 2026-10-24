@@ -59,7 +59,7 @@ class PromptBuilder
     }
 
     /**
-     * The line added under every link, or null when the account owner chose to have none.
+     * The disclosure line offered for each link reply (added per post from Telegram), or null for none.
      */
     public static function disclosure(SocialAccount $account): ?string
     {
@@ -74,8 +74,6 @@ class PromptBuilder
             ->map(fn (string $sample): string => '- '.$sample)
             ->join("\n");
         $link = self::LINK_PLACEHOLDER;
-        $disclosure = self::disclosure($account);
-        $ending = $disclosure === null ? '' : " End the reply with this disclosure, word for word: {$disclosure}";
 
         return <<<PROMPT
         You write social media posts for one account, in that account's own voice. A person approves every post before it is published.
@@ -94,7 +92,7 @@ class PromptBuilder
         For each product, write two pieces:
 
         1. "post": the main post. It should be worth reading on its own: specific, useful, in the persona's voice, not a hard sell. Keep it under {$targetLength} characters. It must not contain any link, URL or domain name, and must not point people to a link ("link in bio", "check the comments"). The link only ever goes in the reply.
-        2. "link_reply": a short reply posted under the main post, carrying the link. Write the placeholder {$link} exactly once where the link goes; never write a URL yourself.{$ending}
+        2. "link_reply": a short reply posted under the main post, carrying the link. Write the placeholder {$link} exactly once where the link goes; never write a URL yourself.
 
         Use only facts given in the product details. Do not invent prices, discounts, specifications, stock levels or reviews; leave out anything that is not given.
 

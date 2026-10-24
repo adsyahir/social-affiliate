@@ -57,7 +57,10 @@ class ApprovalFlowTest extends TestCase
         $this->assertStringContainsString('https://s.shopee.com.my/x', $text);
         $this->assertStringContainsString($post->socialAccount->name, $text);
         $this->assertSame(
-            [[['text' => '✅ Approve', 'callback_data' => "approve:{$post->id}"], ['text' => '❌ Reject', 'callback_data' => "reject:{$post->id}"], ['text' => '🔄 Regenerate', 'callback_data' => "regen:{$post->id}"]]],
+            [
+                [['text' => '✅ Approve', 'callback_data' => "approve:{$post->id}"], ['text' => '❌ Reject', 'callback_data' => "reject:{$post->id}"], ['text' => '🔄 Regenerate', 'callback_data' => "regen:{$post->id}"]],
+                [['text' => '➕ Add disclosure', 'callback_data' => "disc:{$post->id}"]],
+            ],
             DraftMessage::keyboard($post),
         );
         $this->assertNull(DraftMessage::keyboard($this->makePost(['status' => PostStatus::Published])));

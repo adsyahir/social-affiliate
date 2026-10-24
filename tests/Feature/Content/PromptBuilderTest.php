@@ -18,9 +18,11 @@ class PromptBuilderTest extends TestCase
     {
         $prompt = $this->build($this->account(), $this->product());
 
-        foreach (['Malay (rojak)', 'Santai, macam kawan', 'Malaysian students', 'Barang murah tapi best!', 'Link affiliate ya'] as $expected) {
+        foreach (['Malay (rojak)', 'Santai, macam kawan', 'Malaysian students', 'Barang murah tapi best!'] as $expected) {
             $this->assertStringContainsString($expected, $prompt->system);
         }
+        // The disclosure is added per post from Telegram, so the model never writes it.
+        $this->assertStringNotContainsString('Link affiliate ya', $prompt->system);
         $this->assertStringContainsString('{link}', $prompt->system);
         $this->assertStringContainsString('450 characters', $prompt->system);
     }

@@ -62,7 +62,7 @@ class SocialAccountForm
                         TextInput::make('persona.disclosure')
                             ->label('Affiliate disclosure')
                             ->placeholder('Link affiliate ya, aku dapat komisen sikit kalau korang beli.')
-                            ->helperText('Optional. Added to every link reply, in the persona\'s language. Leave empty for none.')
+                            ->helperText('Optional. Each draft in Telegram gets a button to add this line under the link, or leave it out. Leave empty for no button.')
                             ->maxLength(150)
                             ->columnSpanFull(),
                         ToggleButtons::make('content_source')

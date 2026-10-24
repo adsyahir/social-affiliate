@@ -78,7 +78,7 @@ class ManualContentTest extends TestCase
         $this->assertSame(PostStatus::Draft, $post->status);
         $this->assertSame($campaign->id, $post->campaign_id);
         $this->assertSame('Padu gila.', $post->content);
-        $this->assertSame("Sini https://s.shopee.com.my/pasted\n\n".self::DISCLOSURE, $post->link_reply_content);
+        $this->assertSame('Sini https://s.shopee.com.my/pasted', $post->link_reply_content);
         $this->assertSame('manual', $post->generation['source']);
         $this->assertCount(0, $this->claudeRequests());
     }
@@ -89,7 +89,7 @@ class ManualContentTest extends TestCase
 
         $post = app(DraftWriter::class)->createFromText($product, $account, 'Padu.', reply: 'Link kat bawah ni');
 
-        $this->assertSame("Link kat bawah ni\nhttps://s.shopee.com.my/pasted\n\n".self::DISCLOSURE, $post->link_reply_content);
+        $this->assertSame("Link kat bawah ni\nhttps://s.shopee.com.my/pasted", $post->link_reply_content);
     }
 
     public function test_broken_rules_are_explained_and_nothing_is_saved(): void
