@@ -9,6 +9,7 @@ use App\Models\Post;
 use Closure;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
@@ -70,6 +71,14 @@ class PostForm
                             ->live(debounce: 500)
                             ->hint(fn (?string $state): string => mb_strlen((string) $state).' characters')
                             ->disabled(fn (?Post $record): bool => ! self::editable($record))
+                            ->columnSpanFull(),
+                        TextInput::make('image_url')
+                            ->label('Photo URL')
+                            ->url()
+                            ->maxLength(2048)
+                            ->helperText(fn (?Post $record): string => 'Posted with the text. Reply to the post in Telegram with a photo to set it.'
+                                .(blank($record?->image_url) && filled($record?->product?->image_url) ? ' Empty: the product\'s photo is used.' : ''))
+                            ->disabled(fn (?Post $record): bool => ! self::editable($record) && $record?->status !== PostStatus::Pending)
                             ->columnSpanFull(),
                     ]),
                 Section::make('Performance')

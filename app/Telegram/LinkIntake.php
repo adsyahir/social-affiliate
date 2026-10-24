@@ -353,7 +353,7 @@ class LinkIntake
             '/\s*(get it|buy it|shop now|grab it)\b.*\bshopee\b.*$/i',
             '/\s+for RM\s?[\d.,]+[.!]?\s*$/i',
             '/^\s*amazon\.[a-z.]+\s*:\s*/i',
-        ], '', trim((string) preg_replace('/\s+/', ' ', $typed)));
+        ], '', trim((string) preg_replace(['/[\x{FFFC}\x{FFFD}\p{Cf}]/u', '/\s+/'], ['', ' '], $typed)));
 
         $typed = trim((string) $typed, " \t:-");
 

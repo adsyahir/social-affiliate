@@ -195,6 +195,17 @@ class LinkIntakeTest extends TestCase
         $this->assertSame('TYESO Tumbler 1200ml', Product::sole()->name);
     }
 
+    public function test_invisible_placeholder_characters_are_removed_from_the_name(): void
+    {
+        [, $campaign] = $this->shopeeCampaign();
+        $this->account($campaign, 'adamdigitalp');
+
+        $this->send("\u{FFFC}TYESO Tumbler\u{200B} ".self::SHORT_LINK);
+        $this->tap($this->buttons()['✍️ I write']);
+
+        $this->assertSame('TYESO Tumbler', Product::sole()->name);
+    }
+
     public function test_a_linked_word_is_read_from_telegrams_link_data(): void
     {
         [, $campaign] = $this->shopeeCampaign();

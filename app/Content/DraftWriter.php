@@ -18,6 +18,7 @@ use App\Models\Post;
 use App\Models\Product;
 use App\Models\SocialAccount;
 use App\Social\SocialPublisherFactory;
+use App\Telegram\PhotoStore;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -53,6 +54,7 @@ class DraftWriter
             'campaign_id' => $campaign->id,
             'product_id' => $product->id,
             'social_account_id' => $account->id,
+            'image_url' => self::photoOf($product),
             'status' => PostStatus::Draft,
             ...$this->fill($text, $account, $link),
             'generation' => [...$meta, 'link' => $link],
@@ -83,6 +85,7 @@ class DraftWriter
             'campaign_id' => $campaign->id,
             'product_id' => $product->id,
             'social_account_id' => $account->id,
+            'image_url' => self::photoOf($product),
             'status' => PostStatus::Draft,
             ...$this->fromText($product, $account, $link, $text, $reply),
         ]);
@@ -102,6 +105,7 @@ class DraftWriter
             'campaign_id' => $campaign->id,
             'product_id' => $product->id,
             'social_account_id' => $account->id,
+            'image_url' => self::photoOf($product),
             'status' => PostStatus::Pending,
             'content' => '',
             'generation' => ['source' => 'manual', 'link' => $this->link($product, $account, $campaign)],
@@ -264,6 +268,14 @@ class DraftWriter
         }
 
         return ['content' => $text->post, 'link_reply_content' => $reply];
+    }
+
+    /**
+     * Your last photo of the product. Catalogue images (e.g. from Shopee) are never attached unasked.
+     */
+    private static function photoOf(Product $product): ?string
+    {
+        return PhotoStore::isOurs($product->image_url) ? $product->image_url : null;
     }
 
     private function link(Product $product, SocialAccount $account, ?Campaign $campaign): string

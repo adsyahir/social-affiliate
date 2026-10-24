@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable([
-    'campaign_id', 'product_id', 'social_account_id', 'content', 'link_reply_content', 'generation',
+    'campaign_id', 'product_id', 'social_account_id', 'content', 'link_reply_content', 'image_url', 'generation',
     'status', 'approved_at', 'approved_by', 'external_post_id', 'permalink', 'link_reply_id', 'published_at', 'last_error',
     'telegram_chat_id', 'telegram_message_id',
 ])]
@@ -93,6 +93,15 @@ class Post extends Model
     public function replies(): HasMany
     {
         return $this->hasMany(PostReply::class);
+    }
+
+    /**
+     * The photo published with the post. A new post copies your last photo of the product when it
+     * is created, so what you approve is what goes out.
+     */
+    public function imageUrl(): ?string
+    {
+        return $this->image_url ?: null;
     }
 
     /**

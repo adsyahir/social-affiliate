@@ -89,6 +89,54 @@ class TelegramBot
     }
 
     /**
+     * A photo for a channel post. Telegram fetches the image from the URL itself.
+     *
+     * @return int The new message's ID.
+     */
+    public function sendPhoto(string $chatId, string $photoUrl, ?string $caption = null, ?int $replyToMessageId = null): int
+    {
+        $message = $this->call('sendPhoto', array_filter([
+            'chat_id' => $chatId,
+            'photo' => $photoUrl,
+            'caption' => $caption,
+            'reply_parameters' => $replyToMessageId === null ? null : ['message_id' => $replyToMessageId],
+        ], fn ($value) => $value !== null));
+
+        return (int) $message['message_id'];
+    }
+
+    /**
+     * @return array{file_id: string, file_path?: string, file_size?: int}
+     */
+    public function getFile(string $fileId): array
+    {
+        return $this->call('getFile', ['file_id' => $fileId]);
+    }
+
+    /**
+     * The bytes of a file sent to the bot, from the path getFile returned.
+     */
+    public function downloadFile(string $filePath, int $maxBytes): string
+    {
+        $token = (string) ($this->token ?? config('services.telegram.bot_token'));
+        $url = rtrim((string) config('services.telegram.api_base_url'), '/')."/file/bot{$token}/".ltrim($filePath, '/');
+
+        try {
+            $response = Http::timeout(30)->connectTimeout(5)->get($url);
+        } catch (ConnectionException $e) {
+            Log::warning('Telegram file download failed', ['error' => str_replace($token, '[token]', $e->getMessage())]);
+
+            throw new TelegramException('Could not download the file from Telegram.', retryable: true);
+        }
+
+        if (! $response->successful() || strlen($response->body()) > $maxBytes) {
+            throw new TelegramException($response->successful() ? 'The file is too large.' : "Telegram file download failed: HTTP {$response->status()}");
+        }
+
+        return $response->body();
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function getChat(string $chatId): array

@@ -19,7 +19,7 @@ class DraftMessage
     public static function text(Post $post, ?string $note = null): string
     {
         if ($post->status === PostStatus::Pending) {
-            return self::pendingText($post);
+            return self::pendingText($post, $note === null ? '' : "\n\n".self::e($note));
         }
 
         // Skipped while waiting for your text, so there is no draft to show.
@@ -41,6 +41,7 @@ class DraftMessage
             '',
             '<b>Link reply</b>',
             self::e((string) $post->link_reply_content),
+            ...self::photoLines($post),
             '',
             '<i>'.self::e(self::status($post)).'</i>',
         ];
@@ -103,11 +104,12 @@ class DraftMessage
         return $post->writtenByYou();
     }
 
-    private static function pendingText(Post $post): string
+    private static function pendingText(Post $post, string $note = ''): string
     {
         $intro = implode("\n", [
             "✍️ <b>Your turn: post #{$post->id}</b> for <b>".self::e($post->socialAccount->name).'</b>',
             '🛍 '.self::e($post->product?->name ?? 'No product'),
+            ...self::photoLines($post),
             '',
             'Reply to this message with your post. Paste Claude\'s whole answer (POST: / REPLY:) or just the post; the link (and your disclosure, if you set one) is added for you.',
             '',
@@ -115,24 +117,34 @@ class DraftMessage
 
         if ($post->product !== null) {
             $prompt = app(DraftWriter::class)->copyPrompt($post->product, $post->socialAccount);
-            $text = $intro."\n<b>Prompt for Claude.ai</b> (tap to copy):\n<pre>".self::e($prompt).'</pre>';
+            $text = $intro."\n<b>Prompt for Claude.ai</b> (tap to copy):\n<pre>".self::e($prompt).'</pre>'.$note;
 
             if (self::telegramLength($text) <= self::MAX_LENGTH) {
                 return $text;
             }
         }
 
-        return $intro."\nThe prompt is too long for Telegram; open this post in the admin and use Write post to copy it.";
+        return $intro."\nThe prompt is too long for Telegram; open this post in the admin and use Write post to copy it.".$note;
     }
 
     /**
      * Length as Telegram counts it: tags removed, entities decoded, in UTF-16 units (an emoji counts as 2).
      */
-    private static function telegramLength(string $html): int
+    public static function telegramLength(string $html): int
     {
         $plain = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
         return intdiv(strlen(mb_convert_encoding($plain, 'UTF-16LE', 'UTF-8')), 2);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function photoLines(Post $post): array
+    {
+        $url = $post->imageUrl();
+
+        return $url === null ? [] : ['', '🖼 <a href="'.htmlspecialchars($url, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'">Photo</a> (posted with the text)'];
     }
 
     private static function e(string $text): string

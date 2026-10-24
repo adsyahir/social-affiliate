@@ -9,7 +9,9 @@ use App\Enums\PostStatus;
 use App\Jobs\PublishPost;
 use App\Jobs\RegenerateDraft;
 use App\Models\Post;
+use App\Telegram\Exceptions\PhotoException;
 use App\Telegram\Exceptions\TelegramException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -24,6 +26,7 @@ class UpdateHandler
         private readonly DraftWriter $writer,
         private readonly LinkIntake $links,
         private readonly ApprovalChat $chat,
+        private readonly PhotoStore $photos,
     ) {}
 
     /**
@@ -48,31 +51,32 @@ class UpdateHandler
     private function handlePlainMessage(array $message): void
     {
         $chatId = (string) ($message['chat']['id'] ?? '');
+        $text = self::text($message);
+        $photo = PhotoStore::hasPhoto($message);
 
-        $text = trim((string) ($message['text'] ?? ''));
-
-        if ($text === '' || ! $this->authorized($chatId, $message['from'] ?? [])) {
+        if (($text === '' && ! $photo) || ! $this->authorized($chatId, $message['from'] ?? [])) {
             return;
         }
 
         $waiting = Post::query()->where('status', PostStatus::Pending)->orderBy('id')->get();
 
-        // A "POST:" answer sent to the wrong message: with only one post waiting, it is clearly for that one.
-        if ($waiting->count() === 1 && ManualContentParser::looksLikeAnswer($text)) {
-            $this->useYourText($waiting->first(), $text, $chatId, (int) $message['message_id']);
+        // A photo (without other words) or a "POST:" answer sent to the wrong message: with only one
+        // post waiting, it is clearly for that one. A photo captioned with a link starts a new post instead.
+        if ($waiting->count() === 1 && (ManualContentParser::looksLikeAnswer($text) || ($photo && $text === ''))) {
+            $this->forPost($waiting->first(), $message, $text, $chatId, (int) $message['message_id']);
 
             return;
         }
 
-        $entities = $message['entities'] ?? [];
+        $entities = $message['entities'] ?? $message['caption_entities'] ?? [];
 
-        if (LinkIntake::containsLink($text, $entities)) {
+        if ($text !== '' && LinkIntake::containsLink($text, $entities)) {
             $this->links->handle($chatId, (int) $message['message_id'], $text, $entities);
 
             return;
         }
 
-        $hint = 'Send a Shopee or Amazon product link to start a post. To give a post its text, reply to its message (long-press it, then Reply).';
+        $hint = 'Send a Shopee or Amazon product link to start a post. To give a post its text or a photo, reply to its message (long-press it, then Reply).';
 
         if ($waiting->isNotEmpty()) {
             $hint .= ' Waiting for your text: '.$waiting->map(fn (Post $post): string => "#{$post->id}")->implode(', ').'.';
@@ -140,9 +144,9 @@ class UpdateHandler
     private function handleReply(array $message): void
     {
         $chatId = (string) ($message['chat']['id'] ?? '');
-        $text = trim((string) ($message['text'] ?? ''));
+        $text = self::text($message);
 
-        if ($text === '' || ! $this->authorized($chatId, $message['from'] ?? [])) {
+        if (($text === '' && ! PhotoStore::hasPhoto($message)) || ! $this->authorized($chatId, $message['from'] ?? [])) {
             return;
         }
 
@@ -158,11 +162,43 @@ class UpdateHandler
             return;
         }
 
-        $replyTo = (int) $message['message_id'];
+        $this->forPost($post, $message, $text, $chatId, (int) $message['message_id']);
+    }
+
+    /**
+     * Text and/or a photo meant for this post. A photo is attached first; the text (a photo's
+     * caption counts) is then your post text, or feedback for an AI draft.
+     *
+     * @param  array<string, mixed>  $message
+     */
+    private function forPost(Post $post, array $message, string $text, string $chatId, int $replyTo): void
+    {
+        $photoSaved = false;
+
+        if (PhotoStore::hasPhoto($message)) {
+            // An album arrives as one update per photo; the first one is used.
+            if (isset($message['media_group_id']) && ! Cache::add("telegram-album:{$message['media_group_id']}", true, now()->addMinutes(10))) {
+                return;
+            }
+
+            if (! $this->attachPhoto($post, $message, $chatId, $replyTo)) {
+                return;
+            }
+
+            $photoSaved = true;
+
+            if ($text === '') {
+                $this->chat->continueBelow($post->fresh(), $replyTo, $post->status === PostStatus::Pending
+                    ? '🖼 Photo saved. Now reply to this message with your text.'
+                    : '🖼 Photo attached.');
+
+                return;
+            }
+        }
 
         // Posts you write yourself: the reply is the new text, not feedback for the AI.
         if ($post->status === PostStatus::Pending || DraftMessage::writtenByYou($post)) {
-            $this->useYourText($post, $text, $chatId, $replyTo);
+            $this->useYourText($post, $text, $chatId, $replyTo, $photoSaved);
 
             return;
         }
@@ -172,12 +208,54 @@ class UpdateHandler
         }
     }
 
-    private function useYourText(Post $post, string $text, string $chatId, int $replyTo): void
+    /**
+     * @param  array<string, mixed>  $message
+     */
+    private function attachPhoto(Post $post, array $message, string $chatId, int $replyTo): bool
+    {
+        if (! in_array($post->status, [PostStatus::Pending, PostStatus::Draft, PostStatus::Rejected], true)) {
+            $this->safely(fn () => $this->bot->sendMessage($chatId, e("Post #{$post->id} is already {$post->status->value}; a photo can only be added before it is approved."), replyToMessageId: $replyTo));
+
+            return false;
+        }
+
+        try {
+            $url = $this->photos->save($message);
+        } catch (PhotoException $e) {
+            $this->safely(fn () => $this->bot->sendMessage($chatId, e($e->getMessage()), replyToMessageId: $replyTo));
+
+            return false;
+        }
+
+        $previous = [$post->image_url, $post->product?->image_url];
+
+        // The product keeps your latest photo too, so its next post starts with it. Posts that
+        // already exist keep their own photo.
+        $post->update(['image_url' => $url]);
+        $post->product?->update(['image_url' => $url]);
+
+        foreach (array_unique(array_filter($previous)) as $old) {
+            PhotoStore::deleteIfUnused($old);
+        }
+
+        return true;
+    }
+
+    /**
+     * @param  array<string, mixed>  $message
+     */
+    private static function text(array $message): string
+    {
+        return trim((string) ($message['text'] ?? $message['caption'] ?? ''));
+    }
+
+    private function useYourText(Post $post, string $text, string $chatId, int $replyTo, bool $photoSaved = false): void
     {
         try {
             $this->writer->fillFromText($post, $text);
         } catch (ContentGenerationException $e) {
-            $this->safely(fn () => $this->bot->sendMessage($chatId, e($e->getMessage()), replyToMessageId: $replyTo));
+            $message = $e->getMessage().($photoSaved ? ' (The photo was saved; reply again with the text.)' : '');
+            $this->safely(fn () => $this->bot->sendMessage($chatId, e($message), replyToMessageId: $replyTo));
 
             return;
         }

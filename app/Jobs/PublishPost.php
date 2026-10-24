@@ -44,7 +44,7 @@ class PublishPost implements ShouldQueue
             $publisher = $publishers->make($post->socialAccount);
 
             if ($post->external_post_id === null) {
-                $published = $publisher->publish(new PostContent($post->content));
+                $published = $publisher->publish(new PostContent($post->content, $post->imageUrl()));
                 $post->update(['external_post_id' => $published->id, 'permalink' => $published->permalink]);
             }
 

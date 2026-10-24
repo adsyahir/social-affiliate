@@ -14,6 +14,7 @@ use App\Social\Exceptions\InvalidContentException;
 use App\Social\Exceptions\MissingTokenException;
 use App\Social\Exceptions\SocialApiException;
 use App\Social\Exceptions\SocialException;
+use App\Telegram\DraftMessage;
 use App\Telegram\Exceptions\TelegramException;
 use App\Telegram\TelegramBot;
 
@@ -26,6 +27,11 @@ class TelegramChannelPublisher implements SocialPublisher
     use PublishesOnce;
 
     private const MAX_LENGTH = 4096;
+
+    /**
+     * Telegram's limit for a photo caption; longer text follows the photo as its own message.
+     */
+    private const MAX_CAPTION = 1024;
 
     public function __construct(private readonly SocialAccount $account) {}
 
@@ -56,8 +62,27 @@ class TelegramChannelPublisher implements SocialPublisher
         $this->validate($content);
         $channel = $this->channel();
 
-        // No preview on the main post; it has no links anyway.
-        $id = $this->publishOnce('Telegram', fn (): int => $this->call(fn (TelegramBot $bot): int => $bot->sendText($channel, $content->text)));
+        $id = $this->publishOnce('Telegram', fn (): int => $this->call(function (TelegramBot $bot) use ($channel, $content): int {
+            // No preview on the main post; it has no links anyway.
+            if ($content->imageUrl === null) {
+                return $bot->sendText($channel, $content->text);
+            }
+
+            // Telegram counts the caption in UTF-16 units, as it does message text.
+            if (DraftMessage::telegramLength(htmlspecialchars($content->text, ENT_NOQUOTES)) <= self::MAX_CAPTION) {
+                return $bot->sendPhoto($channel, $content->imageUrl, $content->text);
+            }
+
+            // Too long for a caption: the photo, then the text, which the link reply answers.
+            $bot->sendPhoto($channel, $content->imageUrl);
+
+            try {
+                return $bot->sendText($channel, $content->text);
+            } catch (TelegramException $e) {
+                // The photo is already in the channel; a retry would post it again.
+                throw new TelegramException("The photo was posted but the text failed: {$e->getMessage()}. Check the channel before retrying.", retryable: false, status: $e->status);
+            }
+        }));
 
         return new PublishedPost((string) $id, $this->permalink($channel, $id));
     }
@@ -125,9 +150,6 @@ class TelegramChannelPublisher implements SocialPublisher
             throw new InvalidContentException('Telegram allows '.self::MAX_LENGTH.' characters; this post has '.mb_strlen($content->text).'.');
         }
 
-        if ($content->imageUrl !== null) {
-            throw new InvalidContentException('Image posts are not supported for Telegram channels yet.');
-        }
     }
 
     private function channel(): string
