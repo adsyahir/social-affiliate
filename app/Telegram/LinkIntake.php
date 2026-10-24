@@ -461,7 +461,13 @@ class LinkIntake
             $urls[] = rtrim($match, '.,);:!?\'');
         }
 
-        return array_values(array_unique(array_filter($urls, fn (string $url): bool => preg_match('~^https?://~i', $url) === 1)));
+        $urls = array_values(array_unique(array_filter($urls, fn (string $url): bool => preg_match('~^https?://~i', $url) === 1)));
+
+        // Link data that covers only the start of a link (e.g. up to the slash) loses to the whole link.
+        return array_values(array_filter($urls, fn (string $url): bool => ! array_filter(
+            $urls,
+            fn (string $other): bool => $other !== $url && str_starts_with($other, $url),
+        )));
     }
 
     private static function pendingKey(string $token): string

@@ -47,8 +47,12 @@ class AmazonProvider implements AffiliateProvider
             throw new AffiliateException("\"{$product->name}\" does not have an Amazon link.");
         }
 
-        // SiteStripe short links already carry the tag they were made with.
+        // SiteStripe short links already carry the tag they were made with, in their code.
         if (in_array($this->host($url), self::SHORT_LINK_HOSTS, true)) {
+            if (preg_match('~^/[A-Za-z0-9_-]+~', (string) parse_url($url, PHP_URL_PATH)) !== 1) {
+                throw new AffiliateException("\"{$product->name}\" has an Amazon short link without its code.");
+            }
+
             return $url;
         }
 

@@ -133,7 +133,7 @@ class DraftMessage
             '🛍 '.self::e($post->product?->name ?? 'No product'),
             ...self::photoLines($post),
             '',
-            'Reply to this message with your post. Paste Claude\'s whole answer (POST: / REPLY:) or just the post; the link (and your disclosure, if you set one) is added for you.',
+            'Reply to this message with your post. Paste Claude\'s whole answer (POST: / REPLY:) or just the post; the link is added for you, and the draft has a button for your disclosure line.',
             '',
         ]);
 

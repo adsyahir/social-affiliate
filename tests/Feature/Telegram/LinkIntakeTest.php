@@ -206,6 +206,32 @@ class LinkIntakeTest extends TestCase
         $this->assertSame('TYESO Tumbler', Product::sole()->name);
     }
 
+    public function test_a_short_link_without_its_code_is_refused(): void
+    {
+        [, $campaign] = $this->shopeeCampaign();
+        $this->account($campaign, 'adamdigitalp');
+
+        $this->send("https://s.shopee.com.my/\nGRAFEN Hair Tonic");
+
+        Http::assertNotSent(fn (Request $r) => str_contains((string) ($r->data()['text'] ?? ''), 'Who writes'));
+        Http::assertSent(fn (Request $r) => str_contains((string) ($r->data()['text'] ?? ''), 'no tracked Shopee link'));
+    }
+
+    public function test_link_data_that_covers_only_part_of_the_link_does_not_split_it(): void
+    {
+        [, $campaign] = $this->shopeeCampaign();
+        $this->account($campaign, 'adamdigitalp');
+        $text = 'https://s.shopee.com.my/8KqXZTCQ9T new MY [GRAFEN] Root Booster Hair Tonic 160ml';
+
+        // Link data that stops at the slash, as some clients send it.
+        $this->send($text, entities: [['type' => 'url', 'offset' => 0, 'length' => 24]]);
+        $this->tap($this->buttons()['✍️ I write']);
+
+        $product = Product::sole();
+        $this->assertSame('https://s.shopee.com.my/8KqXZTCQ9T', $product->affiliate_link);
+        $this->assertSame('new MY [GRAFEN] Root Booster Hair Tonic 160ml', $product->name);
+    }
+
     public function test_a_linked_word_is_read_from_telegrams_link_data(): void
     {
         [, $campaign] = $this->shopeeCampaign();

@@ -159,7 +159,9 @@ class ShopeeProvider implements AffiliateProvider
 
         $host = (string) $this->host($url);
 
-        return in_array($host, self::SHORT_LINK_HOSTS, true) || str_starts_with($host, 's.shopee.');
+        // A short link is only trackable with its code after the slash.
+        return (in_array($host, self::SHORT_LINK_HOSTS, true) || str_starts_with($host, 's.shopee.'))
+            && preg_match('~^/[A-Za-z0-9_-]+~', (string) parse_url($url, PHP_URL_PATH)) === 1;
     }
 
     private function host(string $url): ?string
