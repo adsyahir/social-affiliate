@@ -12,6 +12,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // On the server the app is only reachable through Traefik (bound to the cluster bridge),
+        // so the forwarded client IP and protocol headers can be trusted.
+        $middleware->trustProxies(at: '*');
+
         // Telegram cannot send a CSRF token; the webhook checks its own secret header instead.
         $middleware->preventRequestForgery(except: ['telegram/webhook']);
     })

@@ -1,0 +1,68 @@
+# Routes k3s's built-in Traefik to the docker compose stack on this host (see compose.yaml).
+# TEMPLATE: values come from .env via envsubst; deploy.sh applies it.
+#
+# Only these objects live in Kubernetes. The app itself runs in docker compose.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${K8S_NAMESPACE}
+---
+# No selector: Kubernetes does not manage the endpoints. The EndpointSlice below supplies them.
+apiVersion: v1
+kind: Service
+metadata:
+  name: social-affiliate
+  namespace: ${K8S_NAMESPACE}
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: ${APP_HOST_PORT}
+---
+# Paired with the Service only by the kubernetes.io/service-name label; a mismatch
+# leaves the Service with no endpoints, silently.
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: social-affiliate
+  namespace: ${K8S_NAMESPACE}
+  labels:
+    kubernetes.io/service-name: social-affiliate
+addressType: IPv4
+ports:
+  - name: http
+    port: ${APP_HOST_PORT}
+endpoints:
+  - addresses:
+      - ${APP_HOST_IP}
+    conditions:
+      ready: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: social-affiliate
+  namespace: ${K8S_NAMESPACE}
+  annotations:
+    # Valid certificate from Let's Encrypt via Cloudflare DNS, so Cloudflare's
+    # Full (strict) mode works; the web entrypoint keeps Flexible mode working too.
+    cert-manager.io/cluster-issuer: letsencrypt-dns
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - ${DOMAIN}
+      secretName: social-affiliate-tls
+  rules:
+    - host: ${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: social-affiliate
+                port:
+                  number: 80

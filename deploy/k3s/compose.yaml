@@ -1,0 +1,76 @@
+# Server stack for the k3s host: app, queue worker, scheduler and Redis.
+# The database is the cluster's shared Postgres; Traefik reaches the app via ingress.yaml.
+#
+# Run from the repo root:  docker compose --env-file .env -f deploy/k3s/compose.yaml up -d --build
+
+name: social-affiliate
+
+x-app: &app
+  build:
+    context: ../..
+    target: production
+  image: social-affiliate:latest
+  restart: unless-stopped
+  env_file: ../../.env
+  environment: &app-env
+    DB_HOST: shared-postgres
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+  # Containers cannot resolve cluster DNS, so the Service's ClusterIP is pinned here.
+  # Check it with: kubectl -n data get svc postgres
+  extra_hosts:
+    - "shared-postgres:${SHARED_POSTGRES_IP:?set SHARED_POSTGRES_IP in .env}"
+  volumes:
+    - storage:/var/www/html/storage
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  app:
+    <<: *app
+    environment:
+      <<: *app-env
+      # Runs migrations and caches config/routes/views on container start.
+      AUTORUN_ENABLED: "true"
+    ports:
+      # Only on the cluster bridge (cni0): Traefik's pods can reach it, the internet cannot.
+      # The server has no firewall, so never publish this on 0.0.0.0.
+      - "${APP_BIND:-10.42.0.1:8090}:8080"
+
+  queue:
+    <<: *app
+    command: ["php", "/var/www/html/artisan", "queue:work", "redis", "--tries=3", "--max-time=3600"]
+    # Wait for app so only one container initialises the shared storage volume.
+    depends_on: &after-app
+      app:
+        condition: service_healthy
+    stop_signal: SIGTERM
+    healthcheck:
+      test: ["CMD", "healthcheck-queue"]
+      start_period: 10s
+
+  scheduler:
+    <<: *app
+    command: ["php", "/var/www/html/artisan", "schedule:work"]
+    depends_on: *after-app
+    stop_signal: SIGTERM
+    healthcheck:
+      test: ["CMD", "healthcheck-schedule"]
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  storage:
+  redisdata:
