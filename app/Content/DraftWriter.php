@@ -251,8 +251,8 @@ class DraftWriter
         $reply = str_replace(PromptBuilder::LINK_PLACEHOLDER, $link, $text->linkReply);
         $disclosure = PromptBuilder::disclosure($account);
 
-        // The disclosure is required on every link reply, whatever the model wrote.
-        if (! str_contains(mb_strtolower($reply), mb_strtolower($disclosure))) {
+        // When the account has a disclosure, every link reply carries it, whatever the model wrote.
+        if ($disclosure !== null && ! str_contains(mb_strtolower($reply), mb_strtolower($disclosure))) {
             $reply .= "\n\n".$disclosure;
         }
 

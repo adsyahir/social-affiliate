@@ -3,6 +3,7 @@
 namespace Tests\Feature\Content;
 
 use App\Content\DraftWriter;
+use App\Content\PromptBuilder;
 use App\Filament\Resources\Posts\Pages\EditPost;
 use App\Filament\Resources\Posts\Pages\ListPosts;
 use App\Filament\Resources\Products\Pages\EditProduct;
@@ -129,6 +130,18 @@ class ContentAdminTest extends TestCase
             ->assertFormFieldDisabled('content')
             ->assertActionHidden('regenerate')
             ->assertActionHidden('delete');
+    }
+
+    public function test_the_disclosure_can_be_left_empty(): void
+    {
+        $account = SocialAccount::factory()->create();
+
+        Livewire::test(EditSocialAccount::class, ['record' => $account->getRouteKey()])
+            ->fillForm(['persona.disclosure' => ''])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertNull(PromptBuilder::disclosure($account->fresh()));
     }
 
     public function test_persona_disclosure_and_model_are_saved(): void

@@ -61,8 +61,9 @@ class PostForm
                                     $fail("Keep the tracked link in the reply: {$link}");
                                 }
 
-                                if ($record?->socialAccount !== null
-                                    && ! str_contains(mb_strtolower($reply), mb_strtolower(PromptBuilder::disclosure($record->socialAccount)))) {
+                                $disclosure = $record?->socialAccount !== null ? PromptBuilder::disclosure($record->socialAccount) : null;
+
+                                if ($disclosure !== null && ! str_contains(mb_strtolower($reply), mb_strtolower($disclosure))) {
                                     $fail('Keep the affiliate disclosure in the reply.');
                                 }
                             })

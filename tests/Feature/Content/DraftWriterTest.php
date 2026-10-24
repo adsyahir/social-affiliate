@@ -53,6 +53,19 @@ class DraftWriterTest extends TestCase
         $this->assertSame('https://s.shopee.com.my/pasted '.self::DISCLOSURE, $post->link_reply_content);
     }
 
+    public function test_an_empty_disclosure_adds_nothing(): void
+    {
+        [$product, $account] = $this->setUpCampaign();
+        $account->update(['persona' => [...$account->persona, 'disclosure' => '']]);
+        $this->fakeClaude([$this->claudeReply(['post' => 'Best!', 'link_reply' => 'Sini: {link}'])]);
+
+        $post = app(DraftWriter::class)->create($product, $account->fresh());
+
+        $this->assertSame('Sini: https://s.shopee.com.my/pasted', $post->link_reply_content);
+        // Nor is the model asked to write one.
+        $this->assertStringNotContainsString('word for word', (string) $this->claudeRequests()[0]->getBody());
+    }
+
     public function test_api_generated_links_are_tagged_with_the_account_and_campaign(): void
     {
         config(['services.shopee_affiliate.endpoint' => 'https://open-api.affiliate.shopee.com.my/graphql']);

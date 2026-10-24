@@ -109,7 +109,7 @@ class DraftMessage
             "✍️ <b>Your turn: post #{$post->id}</b> for <b>".self::e($post->socialAccount->name).'</b>',
             '🛍 '.self::e($post->product?->name ?? 'No product'),
             '',
-            'Reply to this message with your post. Paste Claude\'s whole answer (POST: / REPLY:) or just the post; the link and disclosure are added for you.',
+            'Reply to this message with your post. Paste Claude\'s whole answer (POST: / REPLY:) or just the post; the link (and your disclosure, if you set one) is added for you.',
             '',
         ]);
 

@@ -125,7 +125,7 @@ class ClaudeContentGenerator implements ContentGenerator
             'type' => 'object',
             'properties' => [
                 'post' => ['type' => 'string', 'description' => 'The main post, with no links.'],
-                'link_reply' => ['type' => 'string', 'description' => 'The reply carrying the {link} placeholder and the disclosure.'],
+                'link_reply' => ['type' => 'string', 'description' => 'The reply carrying the {link} placeholder, ending with the disclosure when the instructions give one.'],
             ],
             'required' => ['post', 'link_reply'],
             'additionalProperties' => false,
