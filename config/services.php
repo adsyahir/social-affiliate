@@ -85,6 +85,11 @@ return [
         'window_end' => env('CAMPAIGN_WINDOW_END', '22:00'),
     ],
 
+    'recommendations' => [
+        // Replies you post on other people's Threads posts, at most this many a day (spam safety).
+        'daily_limit' => (int) env('RECOMMENDATION_DAILY_LIMIT', 8),
+    ],
+
     'insights' => [
         // Posts published within this many days get a fresh metrics snapshot every day.
         'days' => (int) env('INSIGHTS_DAYS', 30),

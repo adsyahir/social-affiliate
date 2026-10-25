@@ -9,6 +9,7 @@ use App\Enums\PostStatus;
 use App\Jobs\PublishPost;
 use App\Jobs\RegenerateDraft;
 use App\Models\Post;
+use App\Models\Recommendation;
 use App\Telegram\Exceptions\PhotoException;
 use App\Telegram\Exceptions\TelegramException;
 use Illuminate\Support\Facades\Log;
@@ -27,6 +28,7 @@ class UpdateHandler
         private readonly ApprovalChat $chat,
         private readonly PhotoStore $photos,
         private readonly AlbumCollector $albums,
+        private readonly RecommendationAssistant $recommendations,
     ) {}
 
     /**
@@ -60,6 +62,13 @@ class UpdateHandler
 
         if (isset($message['media_group_id']) && $photo) {
             $this->albumPhoto($message, null, $text, $chatId);
+
+            return;
+        }
+
+        // A Threads post where someone asked for a recommendation.
+        if (! $photo && RecommendationAssistant::isThreadsLink($text)) {
+            $this->recommendations->handle($chatId, (int) $message['message_id'], $text);
 
             return;
         }
@@ -105,6 +114,19 @@ class UpdateHandler
         }
 
         [$action, $id] = array_pad(explode(':', (string) ($query['data'] ?? ''), 2), 2, null);
+
+        // Buttons on a recommendation (a reply you post yourself on someone's Threads post).
+        if (in_array($action, ['recp', 'recd', 'recl', 'recs'], true)) {
+            $messageId = (int) ($query['message']['message_id'] ?? 0);
+            $this->answer($query['id'], match ($action) {
+                'recp' => $this->recommendations->pick($chatId, $messageId, (string) $id),
+                'recd' => $this->recommendations->done($chatId, $messageId, (string) $id),
+                'recl' => $this->recommendations->link($chatId, $messageId, (string) $id),
+                'recs' => $this->recommendations->skip($chatId, $messageId, (string) $id),
+            });
+
+            return;
+        }
 
         // Buttons under a product link you sent: which account, then who writes it.
         if ($action === 'start' || $action === 'write') {
@@ -161,6 +183,19 @@ class UpdateHandler
             ->where('telegram_chat_id', $chatId)
             ->where('telegram_message_id', (int) $message['reply_to_message']['message_id'])
             ->first();
+
+        $recommendation = $post === null ? Recommendation::query()
+            ->where('telegram_chat_id', $chatId)
+            ->where('telegram_message_id', (int) $message['reply_to_message']['message_id'])
+            ->first() : null;
+
+        if ($recommendation !== null) {
+            $text === ''
+                ? $this->recommendations->needsText($chatId, (int) $message['message_id'])
+                : $this->recommendations->reply($recommendation, $text, $chatId, (int) $message['message_id'], $message['entities'] ?? []);
+
+            return;
+        }
 
         // A reply to anything that is not a post (e.g. "What is it called?") is read as a new message.
         if ($post === null) {
