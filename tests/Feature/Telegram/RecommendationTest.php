@@ -311,7 +311,7 @@ class RecommendationTest extends TestCase
         $this->send(self::POST);
 
         $this->assertStringStartsWith('Hi! Boleh suggest any hair serum', Recommendation::sole()->question);
-        Http::assertSent(fn (Request $r) => str_contains($r->url(), 'oembed') && str_contains(urldecode($r->url()), 'access_token=123|shh'));
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), 'oembed') && str_contains(urldecode($r->url()), 'access_token=TH|123|shh'));
     }
 
     public function test_without_app_keys_a_bare_link_asks_for_the_question(): void

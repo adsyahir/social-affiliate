@@ -136,7 +136,9 @@ class RecommendationAssistant
     }
 
     /**
-     * The post's text through Meta's oEmbed API, when the app's ID and secret are set; '' otherwise.
+     * The post's text through Meta's oEmbed API, when the app's ID and secret are set; '' otherwise
+     * (also while Meta has not given the app access to oEmbed, so the bot asks for the question).
+     * Threads app tokens take the form TH|<app id>|<app secret>.
      */
     private function questionFrom(string $url): string
     {
@@ -149,7 +151,7 @@ class RecommendationAssistant
 
         try {
             $html = (string) Http::timeout(10)->connectTimeout(5)
-                ->get(rtrim((string) config('services.threads.base_url'), '/').'/v1.0/oembed', ['url' => $url, 'access_token' => "{$appId}|{$secret}"])
+                ->get(rtrim((string) config('services.threads.base_url'), '/').'/v1.0/oembed', ['url' => $url, 'access_token' => "TH|{$appId}|{$secret}"])
                 ->json('html');
         } catch (ConnectionException) {
             return '';
