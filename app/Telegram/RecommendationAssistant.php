@@ -65,8 +65,7 @@ class RecommendationAssistant
     {
         preg_match(self::THREADS_LINK, $text, $match);
         $url = $this->postUrl(rtrim((string) strtok($match[0], '?#'), '/'));
-        $question = trim((string) preg_replace('/\s+/', ' ', str_replace($match[0], ' ', $text))) ?: $this->questionFrom($url);
-        $question = Str::limit($question, 1000, '');
+        $question = Str::limit(trim((string) preg_replace('/\s+/', ' ', str_replace($match[0], ' ', $text))), 1000, '');
 
         if ($question === '') {
             $this->say($chatId, $messageId, 'Send the link again with their question under it (copy it from Threads), so I can match a product.');
@@ -133,33 +132,6 @@ class RecommendationAssistant
             : (string) $response->effectiveUri();
 
         return preg_match(self::POST_LINK, $canonical, $post) === 1 ? $post[0] : $url;
-    }
-
-    /**
-     * The post's text through Meta's oEmbed API, when the app's ID and secret are set; '' otherwise
-     * (also while Meta has not given the app access to oEmbed, so the bot asks for the question).
-     * Threads app tokens take the form TH|<app id>|<app secret>.
-     */
-    private function questionFrom(string $url): string
-    {
-        $appId = (string) config('services.threads.app_id');
-        $secret = (string) config('services.threads.app_secret');
-
-        if ($appId === '' || $secret === '' || preg_match(self::POST_LINK, $url) !== 1) {
-            return '';
-        }
-
-        try {
-            $html = (string) Http::timeout(10)->connectTimeout(5)
-                ->get(rtrim((string) config('services.threads.base_url'), '/').'/v1.0/oembed', ['url' => $url, 'access_token' => "TH|{$appId}|{$secret}"])
-                ->json('html');
-        } catch (ConnectionException) {
-            return '';
-        }
-
-        $html = (string) preg_replace('~<script\b.*?</script>~is', '', $html);
-
-        return trim((string) preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8')));
     }
 
     /**

@@ -299,22 +299,7 @@ class RecommendationTest extends TestCase
         Http::assertNotSent(fn (Request $r) => str_contains((string) ($r->data()['text'] ?? ''), 'Shopee and Amazon'));
     }
 
-    public function test_with_app_keys_the_question_is_read_from_the_post(): void
-    {
-        config(['services.threads.app_id' => '123', 'services.threads.app_secret' => 'shh']);
-        $this->products();
-        Http::fake([
-            'graph.threads.com/v1.0/oembed*' => Http::response(['html' => '<blockquote class="text-post-media" data-text-post-permalink="x"><a href="x">Hi! Boleh suggest any hair serum yang bagus untuk rambut kering dan senang kusut tak? Tqsm&#x1fa77;</a></blockquote><script async src="https://www.threads.com/embed.js"></script>']),
-            self::TG.'/*' => Http::response(['ok' => true, 'result' => ['message_id' => 70]]),
-        ]);
-
-        $this->send(self::POST);
-
-        $this->assertStringStartsWith('Hi! Boleh suggest any hair serum', Recommendation::sole()->question);
-        Http::assertSent(fn (Request $r) => str_contains($r->url(), 'oembed') && str_contains(urldecode($r->url()), 'access_token=TH|123|shh'));
-    }
-
-    public function test_without_app_keys_a_bare_link_asks_for_the_question(): void
+    public function test_a_bare_link_asks_for_the_question(): void
     {
         $this->products();
 
