@@ -12,8 +12,10 @@ use App\Models\Product;
 use App\Models\Recommendation;
 use App\Models\SocialAccount;
 use App\Telegram\Exceptions\TelegramException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -26,7 +28,9 @@ use Illuminate\Support\Str;
 class RecommendationAssistant
 {
     // The share parameter Threads adds on "Copy link" (?xmt=...) belongs to the link, not the question.
-    private const THREADS_LINK = '~https?://(?:www\.)?threads\.(?:net|com)/(?:@[\w.]+/post|t)/[A-Za-z0-9_-]+/?(?:[?#]\S*)?~i';
+    private const THREADS_LINK = '~https?://(?:www\.)?threads\.(?:net|com)/(?:@[\w.]+/post|t|share)/[A-Za-z0-9_-]+/?(?:[?#]\S*)?~i';
+
+    private const POST_LINK = '~^https?://(?:www\.)?threads\.(?:net|com)/(?:@[\w.]+/post|t)/[A-Za-z0-9_-]+~i';
 
     private const CANDIDATES = 3;
 
@@ -60,8 +64,9 @@ class RecommendationAssistant
     public function handle(string $chatId, int $messageId, string $text): void
     {
         preg_match(self::THREADS_LINK, $text, $match);
-        $url = rtrim((string) strtok($match[0], '?#'), '/');
-        $question = Str::limit(trim((string) preg_replace('/\s+/', ' ', str_replace($match[0], ' ', $text))), 1000, '');
+        $url = $this->postUrl(rtrim((string) strtok($match[0], '?#'), '/'));
+        $question = trim((string) preg_replace('/\s+/', ' ', str_replace($match[0], ' ', $text))) ?: $this->questionFrom($url);
+        $question = Str::limit($question, 1000, '');
 
         if ($question === '') {
             $this->say($chatId, $messageId, 'Send the link again with their question under it (copy it from Threads), so I can match a product.');
@@ -106,6 +111,53 @@ class RecommendationAssistant
                 ? 'Which product fits? Only pick one that really answers what they asked.'
                 : 'No product matched their question; these are your newest. Skip if none fits.',
         ]), [...$buttons, [self::skipButton($recommendation)]], $messageId);
+    }
+
+    /**
+     * A share link (threads.com/share/...) leads to the post; the post's own address is kept.
+     */
+    private function postUrl(string $url): string
+    {
+        if (preg_match(self::POST_LINK, $url) === 1) {
+            return $url;
+        }
+
+        try {
+            $response = Http::timeout(10)->connectTimeout(5)->get($url);
+        } catch (ConnectionException) {
+            return $url;
+        }
+
+        $canonical = preg_match('~<meta property="og:url" content="([^"]+)"~', $response->body(), $meta) === 1
+            ? html_entity_decode($meta[1])
+            : (string) $response->effectiveUri();
+
+        return preg_match(self::POST_LINK, $canonical, $post) === 1 ? $post[0] : $url;
+    }
+
+    /**
+     * The post's text through Meta's oEmbed API, when the app's ID and secret are set; '' otherwise.
+     */
+    private function questionFrom(string $url): string
+    {
+        $appId = (string) config('services.threads.app_id');
+        $secret = (string) config('services.threads.app_secret');
+
+        if ($appId === '' || $secret === '' || preg_match(self::POST_LINK, $url) !== 1) {
+            return '';
+        }
+
+        try {
+            $html = (string) Http::timeout(10)->connectTimeout(5)
+                ->get(rtrim((string) config('services.threads.base_url'), '/').'/v1.0/oembed', ['url' => $url, 'access_token' => "{$appId}|{$secret}"])
+                ->json('html');
+        } catch (ConnectionException) {
+            return '';
+        }
+
+        $html = (string) preg_replace('~<script\b.*?</script>~is', '', $html);
+
+        return trim((string) preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8')));
     }
 
     /**

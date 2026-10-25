@@ -47,6 +47,9 @@ return [
         // Kept short so admin actions finish well inside PHP's time limit; queued jobs retry later.
         'status_checks' => (int) env('THREADS_STATUS_CHECKS', 6),
         'status_check_seconds' => (int) env('THREADS_STATUS_CHECK_SECONDS', 2),
+        // Optional: the Meta app's ID and secret, for reading a post's text from its link (oEmbed).
+        'app_id' => env('THREADS_APP_ID'),
+        'app_secret' => env('THREADS_APP_SECRET'),
     ],
 
     'anthropic' => [
